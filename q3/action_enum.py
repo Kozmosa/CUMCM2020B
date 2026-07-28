@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from itertools import chain
-from typing import Iterator
 
 from .data import Q3Config, Weather
 from .model import (
@@ -14,6 +14,10 @@ from .model import (
     PlayerState,
     Status,
     weight_ok,
+)
+from .pruning import (
+    initial_purchase_is_potentially_useful,
+    optimistic_initial_resource_requirements,
 )
 
 
@@ -61,7 +65,9 @@ def _purchase_options(
             yield buy_w, buy_f
 
 
-def enumerate_initial_purchases(cfg: Q3Config, state: PlayerState) -> tuple[Action, ...]:
+def enumerate_initial_purchases(
+    cfg: Q3Config, state: PlayerState
+) -> tuple[Action, ...]:
     if state.status is not Status.ACTIVE or state.position != cfg.start:
         raise ValueError("initial purchase requires an active player at the start")
     actions: list[Action] = []
@@ -146,12 +152,27 @@ def enumerate_individual_actions(
 
 
 def enumerate_initial_purchases_bounded(
-    cfg: Q3Config, state: PlayerState, *, max_actions: int | None = None
+    cfg: Q3Config,
+    state: PlayerState,
+    *,
+    max_actions: int | None = None,
+    prune_strictly_dominated: bool = True,
 ) -> tuple[Action, ...]:
     if state.status is not Status.ACTIVE or state.position != cfg.start:
         raise ValueError("initial purchase requires an active player at the start")
+    requirements = (
+        optimistic_initial_resource_requirements(cfg)
+        if prune_strictly_dominated
+        else ()
+    )
     actions: list[Action] = []
     for buy_w, buy_f in _purchase_options(cfg, state, price_factor=1):
+        if prune_strictly_dominated and not initial_purchase_is_potentially_useful(
+            state.water + buy_w,
+            state.food + buy_f,
+            requirements,
+        ):
+            continue
         actions.append(Action(ActionKind.INITIAL_BUY, buy_water=buy_w, buy_food=buy_f))
         _check_limit(len(actions), max_actions)
     return tuple(actions)

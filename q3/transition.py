@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 
@@ -37,7 +37,9 @@ class BatchTransitionResult:
     village_buyer_count: np.ndarray
 
 
-def _validate_profile_size(cfg: Q3Config, state: JointState, actions: Sequence[Action]) -> None:
+def _validate_profile_size(
+    cfg: Q3Config, state: JointState, actions: Sequence[Action]
+) -> None:
     if len(state) != cfg.n_players or len(actions) != cfg.n_players:
         raise ValueError("state/action player count does not match configuration")
 
@@ -83,7 +85,10 @@ def apply_initial_purchases(
     _validate_profile_size(cfg, state, actions)
     out: list[PlayerState] = []
     for player, action in zip(state, actions, strict=True):
-        if player.status is not Status.ACTIVE or action.kind is not ActionKind.INITIAL_BUY:
+        if (
+            player.status is not Status.ACTIVE
+            or action.kind is not ActionKind.INITIAL_BUY
+        ):
             return None
         water = player.water + action.buy_water
         food = player.food + action.buy_food
@@ -104,6 +109,95 @@ def apply_initial_purchases(
     return tuple(out)
 
 
+def apply_player_action_given_counts(
+    cfg: Q3Config,
+    player: PlayerState,
+    action: Action,
+    weather: Weather,
+    *,
+    edge_count: int,
+    mine_count: int,
+    village_buyer_count: int,
+) -> PlayerState | None:
+    """Apply one player's action after the joint interaction counts are fixed.
+
+    The interaction counts depend only on the action skeleton (main action,
+    destination, and whether a purchase is positive), not on purchase amounts.
+    Keeping this scalar rule in one place lets the structured profile iterator
+    remove infeasible Cartesian-product entries before continuation values are
+    requested while remaining identical to the reference transition.
+    """
+    if player.status is not Status.ACTIVE:
+        if action.kind is ActionKind.INACTIVE and not action.is_buyer:
+            return player
+        return None
+
+    if action.kind is ActionKind.FAIL:
+        if action.is_buyer:
+            return None
+        return fail_player(cfg, player)
+    if action.kind in (ActionKind.INACTIVE, ActionKind.INITIAL_BUY):
+        return None
+    if action.is_buyer and player.position not in cfg.villages:
+        return None
+    if action.kind is ActionKind.MINE and player.position not in cfg.mines:
+        return None
+    if action.kind is ActionKind.MOVE:
+        if weather == "sandstorm" or action.destination not in cfg.adj[player.position]:
+            return None
+    elif action.kind not in (ActionKind.STAY, ActionKind.MINE):
+        return None
+
+    if action.is_buyer:
+        if village_buyer_count <= 0:
+            return None
+        price_factor = 2 if village_buyer_count == 1 else 4
+    else:
+        price_factor = 0
+    purchase_cost = (
+        cfg.money_scale
+        * price_factor
+        * (cfg.water_price * action.buy_water + cfg.food_price * action.buy_food)
+    )
+    water = player.water + action.buy_water
+    food = player.food + action.buy_food
+    cash = player.cash_scaled - purchase_cost
+    if cash < 0 or not weight_ok(cfg, water, food):
+        return None
+
+    if action.kind is ActionKind.STAY:
+        multiplier = 1
+        destination = player.position
+        income = 0
+    elif action.kind is ActionKind.MINE:
+        if mine_count <= 0:
+            return None
+        multiplier = 3
+        destination = player.position
+        income = cfg.money_scale * cfg.mine_income // mine_count
+    else:
+        if edge_count <= 0:
+            return None
+        multiplier = 2 * edge_count
+        destination = action.destination
+        income = 0
+
+    water -= multiplier * cfg.water_consume[weather]
+    food -= multiplier * cfg.food_consume[weather]
+    if water < 0 or food < 0:
+        return None
+    next_player = PlayerState(
+        Status.ACTIVE,
+        position=destination,
+        water=water,
+        food=food,
+        cash_scaled=cash + income,
+    )
+    if destination == cfg.end:
+        next_player = finish_player(cfg, next_player)
+    return next_player
+
+
 def apply_joint_transition_scalar(
     cfg: Q3Config,
     state: JointState,
@@ -113,76 +207,20 @@ def apply_joint_transition_scalar(
     """Apply one simultaneous day, returning None for an illegal profile."""
     _validate_profile_size(cfg, state, actions)
     counts = count_interactions_scalar(state, actions)
-    base_w = cfg.water_consume[weather]
-    base_f = cfg.food_consume[weather]
     out: list[PlayerState] = []
 
     for i, (player, action) in enumerate(zip(state, actions, strict=True)):
-        if player.status is not Status.ACTIVE:
-            if action.kind is not ActionKind.INACTIVE or action.is_buyer:
-                return None
-            out.append(player)
-            continue
-
-        if action.kind is ActionKind.FAIL:
-            if action.is_buyer:
-                return None
-            out.append(fail_player(cfg, player))
-            continue
-        if action.kind in (ActionKind.INACTIVE, ActionKind.INITIAL_BUY):
-            return None
-
-        if action.is_buyer and player.position not in cfg.villages:
-            return None
-        if action.kind is ActionKind.MINE and player.position not in cfg.mines:
-            return None
-        if action.kind is ActionKind.MOVE:
-            if weather == "sandstorm" or action.destination not in cfg.adj[player.position]:
-                return None
-        elif action.kind not in (ActionKind.STAY, ActionKind.MINE):
-            return None
-
-        if action.is_buyer:
-            price_factor = 2 if counts.village_buyers[i] == 1 else 4
-        else:
-            price_factor = 0
-        purchase_cost = cfg.money_scale * price_factor * (
-            cfg.water_price * action.buy_water + cfg.food_price * action.buy_food
+        next_player = apply_player_action_given_counts(
+            cfg,
+            player,
+            action,
+            weather,
+            edge_count=counts.edge[i],
+            mine_count=counts.mine[i],
+            village_buyer_count=counts.village_buyers[i],
         )
-        water = player.water + action.buy_water
-        food = player.food + action.buy_food
-        cash = player.cash_scaled - purchase_cost
-        if cash < 0 or not weight_ok(cfg, water, food):
+        if next_player is None:
             return None
-
-        if action.kind is ActionKind.STAY:
-            multiplier = 1
-            destination = player.position
-            income = 0
-        elif action.kind is ActionKind.MINE:
-            multiplier = 3
-            destination = player.position
-            if counts.mine[i] <= 0:
-                return None
-            income = cfg.money_scale * cfg.mine_income // counts.mine[i]
-        else:
-            multiplier = 2 * counts.edge[i]
-            destination = action.destination
-            income = 0
-
-        water -= multiplier * base_w
-        food -= multiplier * base_f
-        if water < 0 or food < 0:
-            return None
-        next_player = PlayerState(
-            Status.ACTIVE,
-            position=destination,
-            water=water,
-            food=food,
-            cash_scaled=cash + income,
-        )
-        if destination == cfg.end:
-            next_player = finish_player(cfg, next_player)
         out.append(next_player)
     return tuple(out)
 
@@ -201,22 +239,26 @@ def apply_joint_transition_batch(
     if batch == 0:
         empty = np.empty((0, n), dtype=np.int16)
         return BatchTransitionResult(
-            np.empty(0, dtype=bool), tuple(), empty, empty.copy(), empty.copy()
+            np.empty(0, dtype=bool), (), empty, empty.copy(), empty.copy()
         )
     if any(len(profile) != n for profile in profiles):
         raise ValueError("profile player count does not match configuration")
 
     kind = np.asarray(
-        [[int(action.kind) for action in profile] for profile in profiles], dtype=np.int8
+        [[int(action.kind) for action in profile] for profile in profiles],
+        dtype=np.int8,
     )
     destination = np.asarray(
-        [[action.destination for action in profile] for profile in profiles], dtype=np.int16
+        [[action.destination for action in profile] for profile in profiles],
+        dtype=np.int16,
     )
     buy_w = np.asarray(
-        [[action.buy_water for action in profile] for profile in profiles], dtype=np.int32
+        [[action.buy_water for action in profile] for profile in profiles],
+        dtype=np.int32,
     )
     buy_f = np.asarray(
-        [[action.buy_food for action in profile] for profile in profiles], dtype=np.int32
+        [[action.buy_food for action in profile] for profile in profiles],
+        dtype=np.int32,
     )
     status = np.asarray([int(player.status) for player in state], dtype=np.int8)
     source = np.asarray([player.position for player in state], dtype=np.int16)
@@ -254,12 +296,18 @@ def apply_joint_transition_batch(
             player_valid[:, i] &= ~is_mine[:, i]
         if player.position not in cfg.villages:
             player_valid[:, i] &= ~is_buyer[:, i]
-        player_valid[:, i] &= is_stay[:, i] | is_mine[:, i] | is_move[:, i] | is_fail[:, i]
+        player_valid[:, i] &= (
+            is_stay[:, i] | is_mine[:, i] | is_move[:, i] | is_fail[:, i]
+        )
 
     price_factor = np.where(is_buyer, np.where(buyer_count == 1, 2, 4), 0)
-    purchase_cost = cfg.money_scale * price_factor.astype(np.int64) * (
-        cfg.water_price * buy_w.astype(np.int64)
-        + cfg.food_price * buy_f.astype(np.int64)
+    purchase_cost = (
+        cfg.money_scale
+        * price_factor.astype(np.int64)
+        * (
+            cfg.water_price * buy_w.astype(np.int64)
+            + cfg.food_price * buy_f.astype(np.int64)
+        )
     )
     water_pre = water0[None, :] + buy_w
     food_pre = food0[None, :] + buy_f

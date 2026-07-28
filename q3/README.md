@@ -1,4 +1,4 @@
-# Q3 exact solver — first implementation stage
+# Q3 exact solver
 
 This directory contains the exact, lossless core for question 3:
 
@@ -10,12 +10,19 @@ This directory contains the exact, lossless core for question 3:
 - pure-strategy Nash detection on coupled feasible action sets;
 - deterministic multiple-equilibrium selection;
 - player-permutation canonicalization and sparse stochastic recursion;
+- lossless action-skeleton filtering before purchase Cartesian products;
+- blockwise exact best-response and pure-Nash search for large stage games;
+- block-local canonical successor deduplication and configurable workers;
+- atomic value/policy/stage-progress checkpoints with resume support;
 - explicit CPU/memory safety limits that stop instead of approximating.
 
-The current workstation-safe backend materializes the complete payoff tensor
-for a small stage game.  It is intended for correctness tests and short-horizon
-states.  The large purchase games at day 0 and villages still require the
-documented chunked exact backend before a full 30-day level-6 run is practical.
+Small stage games use a dense payoff tensor.  Larger games automatically switch
+to a bounded-memory exact best-response scan.  A proven optimistic-reachability
+test removes 31,676 strictly dominated day-0 purchases, leaving 88,925 actions
+per player and about 7.032e14 ordered profiles.  Identical player states share
+one immutable action tuple.  A complete 30-day level-6 solve therefore remains
+a long-running research computation even though the previous tensor-memory
+blocker has been removed.
 
 ## Commands
 
@@ -38,12 +45,42 @@ Solve a small late level-6 state under explicit limits:
   --mode level6-state --day 29 --position 24 --water 60 --food 60
 ```
 
+Run with parallel successor evaluation and an atomic checkpoint:
+
+```bash
+.venv/bin/python -m q3.solve_q3_2 \
+  --mode level6-state --day 27 --position 22 --water 120 --food 120 \
+  --workers 16 --max-states 200000 \
+  --checkpoint /tmp/q3-day27.chk --checkpoint-every-states 20000
+```
+
+Resume the same calculation:
+
+```bash
+.venv/bin/python -m q3.solve_q3_2 \
+  --mode level6-state --day 27 --position 22 --water 120 --food 120 \
+  --workers 16 --max-states 200000 \
+  --checkpoint /tmp/q3-day27.chk --resume
+```
+
+On CPython 3.13t the thread backend can execute Python recursion without the
+GIL.  Numba/llvmlite currently has no compatible wheel in this environment, so
+the free-threaded environment uses the exact NumPy interaction fallback:
+
+```bash
+uv python install 3.13t
+uv venv .venv-ft --python 3.13t
+uv pip install --python .venv-ft/bin/python 'numpy>=2.4.6,<2.5'
+.venv-ft/bin/python -m q3.solve_q3_2 --mode smoke --workers 16
+```
+
 Attempting the full initial-purchase game is allowed only through explicit
-limits.  Exceeding them returns `RESOURCE_LIMIT` without selecting Top-K
+limits.  Exceeding them returns `SEARCH_STOPPED` without selecting Top-K
 actions, quantizing resources, or enabling any other approximation.
 
-Numba is not installed in the current Python 3.13 environment, so the batch
-kernels automatically use the NumPy fallback here.  `interaction.py` already
-contains an optional cached `@njit` implementation with identical inputs and
-outputs; installing a compatible Numba build on the 128-core machine activates
-it without changing solver semantics.
+Numba is included in the UV environment and activates the cached `@njit`
+interaction-counting kernel automatically.  `interaction.py` retains an
+identical NumPy fallback for environments where Numba is unavailable.  This
+accelerates a tested hot kernel without changing solver semantics, but the
+full solve still needs stronger proven value bounds to reduce the enormous
+day-0 best-response search.

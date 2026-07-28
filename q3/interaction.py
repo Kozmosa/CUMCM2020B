@@ -9,7 +9,7 @@ from .model import ActionKind
 MOVE_CODE = int(ActionKind.MOVE)
 MINE_CODE = int(ActionKind.MINE)
 
-try:  # Numba is optional because the current Python 3.13 environment lacks it.
+try:  # Keep a NumPy fallback for environments that omit the optional JIT runtime.
     from numba import njit
 
     NUMBA_AVAILABLE = True

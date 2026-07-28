@@ -1,17 +1,31 @@
 from __future__ import annotations
 
 import unittest
+from itertools import product
+from pathlib import Path
 from random import Random
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
-from q3.action_enum import enumerate_individual_actions
+from q3.action_enum import (
+    enumerate_individual_actions,
+    enumerate_initial_purchases_bounded,
+)
 from q3.canonical import canonicalize_state, value_to_original
-from q3.data import Q3Config, tiny_level6
+from q3.data import Q3Config, level6, tiny_level6
 from q3.model import Action, ActionKind, PlayerState, StateValue, Status
+from q3.profile_enum import StructuredEnumerationStats, iter_structured_profile_blocks
+from q3.pruning import optimistic_initial_resource_requirements
 from q3.resource_index import ResourceIndex
-from q3.stage_game import pure_nash_indices, select_pure_equilibrium, verify_pure_equilibrium
-from q3.stochastic_dp import ExactQ3Solver, SolverLimits
+from q3.stage_game import (
+    ProfileBatchEvaluation,
+    chunked_pure_nash_search,
+    pure_nash_indices,
+    select_pure_equilibrium,
+    verify_pure_equilibrium,
+)
+from q3.stochastic_dp import ExactQ3Solver, ResourceLimitExceeded, SolverLimits
 from q3.transition import (
     apply_joint_transition_batch,
     apply_joint_transition_scalar,
@@ -86,7 +100,9 @@ class TransitionTests(unittest.TestCase):
         cfg = tiny_level6()
         state = tuple(active(cfg, 1) for _ in range(3))
         actions = tuple(Action(ActionKind.MOVE, destination=2) for _ in range(3))
-        self.assertIsNone(apply_joint_transition_scalar(cfg, state, actions, "sandstorm"))
+        self.assertIsNone(
+            apply_joint_transition_scalar(cfg, state, actions, "sandstorm")
+        )
 
     def test_scalar_vectorized_equivalence(self) -> None:
         state = tuple(active(self.cfg, 2) for _ in range(3))
@@ -104,27 +120,20 @@ class TransitionTests(unittest.TestCase):
             for a1 in action_sets[1]
             for a2 in action_sets[2]
         ]
-        ok, message = compare_scalar_and_vectorized(
-            self.cfg, state, profiles, "sunny"
-        )
+        ok, message = compare_scalar_and_vectorized(self.cfg, state, profiles, "sunny")
         self.assertTrue(ok, message)
 
     def test_random_village_profiles_match_scalar_reference(self) -> None:
         state = tuple(active(self.cfg, 2, water=3, food=3) for _ in range(3))
         action_sets = [
-            enumerate_individual_actions(
-                self.cfg, player, "sunny", max_actions=512
-            )
+            enumerate_individual_actions(self.cfg, player, "sunny", max_actions=512)
             for player in state
         ]
         random = Random(20260728)
         profiles = [
-            tuple(random.choice(actions) for actions in action_sets)
-            for _ in range(250)
+            tuple(random.choice(actions) for actions in action_sets) for _ in range(250)
         ]
-        ok, message = compare_scalar_and_vectorized(
-            self.cfg, state, profiles, "sunny"
-        )
+        ok, message = compare_scalar_and_vectorized(self.cfg, state, profiles, "sunny")
         self.assertTrue(ok, message)
 
     def test_absorbed_players_are_ignored_by_interactions(self) -> None:
@@ -176,7 +185,82 @@ class EnumerationAndCompressionTests(unittest.TestCase):
         canonical_value = StateValue((10.0, 20.0, 30.0), (0.0, 0.5, 1.0))
         original = value_to_original(canonical_value, mapping)
         for canonical_i, original_i in enumerate(mapping):
-            self.assertEqual(original.value[original_i], canonical_value.value[canonical_i])
+            self.assertEqual(
+                original.value[original_i], canonical_value.value[canonical_i]
+            )
+
+    def test_structured_blocks_equal_full_joint_feasibility(self) -> None:
+        cfg = tiny_level6()
+        state = tuple(active(cfg, 2, water=5, food=5) for _ in range(3))
+        action_sets = tuple(
+            enumerate_individual_actions(cfg, player, "sunny", max_actions=128)
+            for player in state
+        )
+        indexed_profiles = tuple(
+            product(*(range(len(actions)) for actions in action_sets))
+        )
+        profiles = tuple(
+            tuple(action_sets[player][index[player]] for player in range(3))
+            for index in indexed_profiles
+        )
+        expected_batch = apply_joint_transition_batch(cfg, state, profiles, "sunny")
+        expected = {
+            indexed_profiles[row] for row in np.flatnonzero(expected_batch.valid)
+        }
+
+        stats = StructuredEnumerationStats()
+        actual: set[tuple[int, ...]] = set()
+        for block in iter_structured_profile_blocks(
+            cfg,
+            state,
+            action_sets,
+            "sunny",
+            block_size=7,
+            stats=stats,
+        ):
+            actual.update(tuple(int(x) for x in row) for row in block.indices)
+            block_batch = apply_joint_transition_batch(
+                cfg, state, block.profiles, "sunny"
+            )
+            self.assertTrue(block_batch.valid.all())
+        self.assertEqual(actual, expected)
+        self.assertEqual(stats.raw_profiles, len(indexed_profiles))
+        self.assertEqual(stats.feasible_profiles, len(expected))
+        self.assertGreater(stats.profiles_pruned, 0)
+
+    def test_initial_purchase_dominance_pruning_is_optimistic_and_lossless(
+        self,
+    ) -> None:
+        cfg = level6()
+        state = PlayerState(
+            Status.ACTIVE,
+            position=cfg.start,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        requirements = optimistic_initial_resource_requirements(cfg)
+        self.assertEqual(requirements, ((30, 40),))
+        full = enumerate_initial_purchases_bounded(
+            cfg,
+            state,
+            max_actions=200_000,
+            prune_strictly_dominated=False,
+        )
+        reduced = enumerate_initial_purchases_bounded(
+            cfg,
+            state,
+            max_actions=200_000,
+            prune_strictly_dominated=True,
+        )
+        self.assertIn(Action(ActionKind.INITIAL_BUY), reduced)
+        self.assertTrue(
+            all(
+                (not action.is_buyer)
+                or (action.buy_water >= 30 and action.buy_food >= 40)
+                for action in reduced
+            )
+        )
+        self.assertEqual(len(full), 120_601)
+        self.assertEqual(len(reduced), 88_925)
 
 
 class StageGameTests(unittest.TestCase):
@@ -211,6 +295,44 @@ class StageGameTests(unittest.TestCase):
         )
         selected = select_pure_equilibrium(indices, payoff, success, action_sets)
         self.assertEqual(selected.index, (1, 1))
+
+    def test_chunked_search_matches_dense_random_games(self) -> None:
+        random = np.random.default_rng(20260728)
+        action_sets = tuple(
+            tuple(
+                Action(ActionKind.MOVE, destination=index + 1) for index in range(count)
+            )
+            for count in (2, 3, 2)
+        )
+        for _ in range(20):
+            payoff = random.normal(size=(2, 3, 2, 3))
+            success = random.random(size=(2, 3, 2, 3))
+            valid = random.random(size=(2, 3, 2)) > 0.25
+
+            def evaluator(
+                indices: np.ndarray,
+                valid: np.ndarray = valid,
+                payoff: np.ndarray = payoff,
+                success: np.ndarray = success,
+            ) -> ProfileBatchEvaluation:
+                coordinates = tuple(indices[:, player] for player in range(3))
+                return ProfileBatchEvaluation(
+                    valid[coordinates], payoff[coordinates], success[coordinates]
+                )
+
+            dense_indices = {
+                tuple(int(x) for x in row) for row in pure_nash_indices(payoff, valid)
+            }
+            chunked_indices = {
+                equilibrium.index
+                for equilibrium in chunked_pure_nash_search(
+                    action_sets,
+                    evaluator,
+                    chunk_size=2,
+                    workers=2,
+                )
+            }
+            self.assertEqual(chunked_indices, dense_indices)
 
 
 class SparseSolverTests(unittest.TestCase):
@@ -266,6 +388,131 @@ class SparseSolverTests(unittest.TestCase):
             (2, 2),
         )
         self.assertEqual(result.value.success, (1.0,))
+
+    def test_three_player_chunked_initial_stage_matches_dense(self) -> None:
+        cfg = Q3Config(
+            name="three-player-initial",
+            n_players=3,
+            deadline=1,
+            mine_income=0,
+            p_weather={"sunny": 1.0},
+            weight_limit=4,
+            init_cash=20,
+            water_weight=1,
+            food_weight=1,
+            water_price=1,
+            food_price=1,
+            water_consume={"sunny": 1},
+            food_consume={"sunny": 1},
+            start=1,
+            end=2,
+            mines=frozenset(),
+            villages=frozenset(),
+            adj={1: (2,), 2: (1,)},
+            nodes=(1, 2),
+            failure_penalty=100,
+        )
+        dense = ExactQ3Solver(cfg, limits=SolverLimits(128, 100, 10_000, 8, 10_000))
+        chunked = ExactQ3Solver(
+            cfg,
+            limits=SolverLimits(128, 1, 10_000, 2, 10_000),
+            workers=2,
+        )
+        try:
+            dense_result = dense.solve_initial_purchases()
+            chunked_result = chunked.solve_initial_purchases()
+            self.assertEqual(chunked_result, dense_result)
+            self.assertGreaterEqual(chunked.stats.action_enumerations, 1)
+            self.assertGreaterEqual(chunked.stats.action_set_reuses, 2)
+            self.assertGreaterEqual(chunked.stats.chunked_stage_games, 1)
+        finally:
+            dense.close()
+            chunked.close()
+
+    def test_chunked_parallel_backend_matches_dense_backend(self) -> None:
+        cfg = tiny_level6()
+        state = tuple(active(cfg, 2, water=6, food=6) for _ in range(3))
+        dense = ExactQ3Solver(
+            cfg,
+            limits=SolverLimits(128, 100_000, 20_000, 64, 100_000),
+        )
+        chunked = ExactQ3Solver(
+            cfg,
+            limits=SolverLimits(128, 1, 20_000, 2, 100_000),
+            workers=2,
+        )
+        try:
+            dense_value = dense.solve_state(1, state)
+            chunked_value = chunked.solve_state(1, state)
+            self.assertEqual(chunked_value, dense_value)
+            self.assertEqual(
+                chunked.policy_for(1, state, "sunny"),
+                dense.policy_for(1, state, "sunny"),
+            )
+            self.assertEqual(chunked.stats.chunked_stage_games, 1)
+            self.assertGreater(chunked.stats.opponent_pairs_completed, 0)
+            self.assertGreater(dense.stats.duplicate_successors, 0)
+        finally:
+            dense.close()
+            chunked.close()
+
+    def test_checkpoint_round_trip_preserves_value_and_policy(self) -> None:
+        cfg = tiny_level6()
+        state = tuple(active(cfg, 2, water=6, food=6) for _ in range(3))
+        with TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "q3.chk"
+            solver = ExactQ3Solver(cfg, checkpoint_path=checkpoint)
+            try:
+                expected = solver.solve_state(1, state)
+                expected_policy = solver.policy_for(1, state, "sunny")
+                solver.save_checkpoint()
+            finally:
+                solver.close()
+
+            restored = ExactQ3Solver(cfg, checkpoint_path=checkpoint)
+            try:
+                restored.load_checkpoint()
+                self.assertEqual(restored.solve_state(1, state), expected)
+                self.assertEqual(
+                    restored.policy_for(1, state, "sunny"), expected_policy
+                )
+                self.assertEqual(restored.stats.checkpoint_loads, 1)
+            finally:
+                restored.close()
+
+    def test_chunked_stage_progress_resumes_after_resource_stop(self) -> None:
+        cfg = tiny_level6()
+        state = tuple(active(cfg, 2, water=6, food=6) for _ in range(3))
+        with TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "q3-progress.chk"
+            limited = ExactQ3Solver(
+                cfg,
+                limits=SolverLimits(128, 1, 20_000, 2, 80),
+                checkpoint_path=checkpoint,
+                checkpoint_every_pairs=1,
+            )
+            try:
+                with self.assertRaises(ResourceLimitExceeded):
+                    limited.solve_state(1, state)
+            finally:
+                limited.close()
+            self.assertTrue(checkpoint.exists())
+
+            resumed = ExactQ3Solver(
+                cfg,
+                limits=SolverLimits(128, 1, 20_000, 2, 100_000),
+                checkpoint_path=checkpoint,
+            )
+            dense = ExactQ3Solver(cfg)
+            try:
+                resumed.load_checkpoint()
+                self.assertEqual(
+                    resumed.solve_state(1, state), dense.solve_state(1, state)
+                )
+                self.assertGreater(resumed.stats.checkpoint_loads, 0)
+            finally:
+                resumed.close()
+                dense.close()
 
 
 if __name__ == "__main__":
