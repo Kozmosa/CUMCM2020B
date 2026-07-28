@@ -10,6 +10,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Local solver profiles and resumable benchmark checkpoints
+profile_output/
+
 # Editors
 .vscode/
 .idea/
