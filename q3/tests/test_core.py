@@ -16,7 +16,10 @@ from q3.canonical import canonicalize_state, value_to_original
 from q3.data import Q3Config, level6, tiny_level6
 from q3.model import Action, ActionKind, PlayerState, StateValue, Status
 from q3.profile_enum import StructuredEnumerationStats, iter_structured_profile_blocks
-from q3.pruning import optimistic_initial_resource_requirements
+from q3.pruning import (
+    RelaxedSinglePlayerUpperBound,
+    optimistic_initial_resource_requirements,
+)
 from q3.resource_index import ResourceIndex
 from q3.stage_game import (
     ProfileBatchEvaluation,
@@ -355,6 +358,65 @@ class SparseSolverTests(unittest.TestCase):
             tuple((ActionKind.MOVE, 3) for _ in range(3)),
         )
 
+    def test_relaxed_upper_bound_dominates_exact_single_player_values(self) -> None:
+        cfg = tiny_level6(n_players=1)
+        upper_bound = RelaxedSinglePlayerUpperBound.build(cfg)
+        solver = ExactQ3Solver(cfg)
+        try:
+            for day in (0, 1):
+                for position in (1, 2):
+                    for water, food in ((0, 0), (3, 3), (6, 6)):
+                        player = active(
+                            cfg,
+                            position,
+                            water=water,
+                            food=food,
+                            cash=40,
+                        )
+                        exact = solver.solve_state(day, (player,)).value[0]
+                        relaxed = upper_bound.value(day, player)
+                        self.assertLessEqual(exact, relaxed)
+        finally:
+            solver.close()
+
+    def test_bound_pruning_matches_unpruned_chunked_search(self) -> None:
+        cfg = tiny_level6()
+        state = tuple(active(cfg, 2, water=6, food=6) for _ in range(3))
+        limits = SolverLimits(128, 1, 20_000, 1, 100_000)
+        pruned = ExactQ3Solver(
+            cfg,
+            limits=limits,
+            workers=2,
+            enable_bound_pruning=True,
+            record_pruning_certificates=True,
+        )
+        unpruned = ExactQ3Solver(
+            cfg,
+            limits=limits,
+            workers=2,
+            enable_bound_pruning=False,
+        )
+        try:
+            self.assertEqual(
+                pruned.solve_state(1, state), unpruned.solve_state(1, state)
+            )
+            self.assertEqual(
+                pruned.policy_for(1, state, "sunny"),
+                unpruned.policy_for(1, state, "sunny"),
+            )
+            self.assertGreater(pruned.stats.best_response_profiles_pruned, 0)
+            self.assertLess(pruned.stats.joint_profiles, unpruned.stats.joint_profiles)
+            self.assertTrue(pruned.pruning_certificates)
+            self.assertTrue(
+                all(
+                    certificate.safety_margin > 0
+                    for certificate in pruned.pruning_certificates
+                )
+            )
+        finally:
+            pruned.close()
+            unpruned.close()
+
     def test_one_player_initial_purchase_stage(self) -> None:
         cfg = Q3Config(
             name="one-step",
@@ -477,6 +539,41 @@ class SparseSolverTests(unittest.TestCase):
                     restored.policy_for(1, state, "sunny"), expected_policy
                 )
                 self.assertEqual(restored.stats.checkpoint_loads, 1)
+            finally:
+                restored.close()
+
+    def test_pruning_certificates_survive_checkpoint(self) -> None:
+        cfg = tiny_level6()
+        state = tuple(active(cfg, 2, water=6, food=6) for _ in range(3))
+        limits = SolverLimits(128, 1, 20_000, 1, 100_000)
+        with TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "q3-pruning.chk"
+            solver = ExactQ3Solver(
+                cfg,
+                limits=limits,
+                checkpoint_path=checkpoint,
+                record_pruning_certificates=True,
+            )
+            try:
+                solver.solve_state(1, state)
+                solver.save_checkpoint()
+                expected = tuple(solver.pruning_certificates)
+                self.assertTrue(expected)
+            finally:
+                solver.close()
+
+            restored = ExactQ3Solver(
+                cfg,
+                limits=limits,
+                checkpoint_path=checkpoint,
+                record_pruning_certificates=True,
+            )
+            try:
+                restored.load_checkpoint()
+                self.assertEqual(tuple(restored.pruning_certificates), expected)
+                self.assertEqual(
+                    restored.stats.pruning_certificates_recorded, len(expected)
+                )
             finally:
                 restored.close()
 

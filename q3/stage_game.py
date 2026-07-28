@@ -153,7 +153,11 @@ def chunked_pure_nash_search(
     *,
     chunk_size: int,
     atol: float = 1e-10,
+    bound_slack: float = 0.0,
     workers: int = 1,
+    upper_bounder: Callable[[np.ndarray, int], np.ndarray] | None = None,
+    pruning_callback: Callable[[int, np.ndarray, np.ndarray, float], None]
+    | None = None,
     progress: ChunkedSearchProgress | None = None,
     progress_callback: Callable[[ChunkedSearchProgress], None] | None = None,
 ) -> tuple[PureEquilibrium, ...]:
@@ -165,8 +169,10 @@ def chunked_pure_nash_search(
     """
     if len(action_sets) != 3:
         raise ValueError("the chunked backend currently requires exactly three players")
-    if chunk_size <= 0 or workers <= 0:
-        raise ValueError("chunk_size and workers must be positive")
+    if chunk_size <= 0 or workers <= 0 or bound_slack < 0:
+        raise ValueError(
+            "chunk_size/workers must be positive and bound_slack non-negative"
+        )
     counts = tuple(len(actions) for actions in action_sets)
     if any(count == 0 for count in counts):
         return ()
@@ -204,12 +210,29 @@ def chunked_pure_nash_search(
             stop = min(start + chunk_size, counts[player])
             indices = np.tile(np.asarray(base_index, dtype=np.int64), (stop - start, 1))
             indices[:, player] = np.arange(start, stop, dtype=np.int64)
+            if upper_bounder is not None and np.isfinite(best_value):
+                upper_bounds = np.asarray(
+                    upper_bounder(indices, player), dtype=np.float64
+                )
+                if upper_bounds.shape != (len(indices),):
+                    raise ValueError("upper bounder returned an invalid shape")
+                keep = upper_bounds >= best_value - atol - bound_slack
+                if pruning_callback is not None and not keep.all():
+                    pruning_callback(
+                        player,
+                        indices[~keep].copy(),
+                        upper_bounds[~keep].copy(),
+                        best_value,
+                    )
+                indices = indices[keep]
+                if len(indices) == 0:
+                    continue
             evaluation = evaluator(indices)
             _validate_evaluation(evaluation, len(indices), 3)
             feasible_rows = np.flatnonzero(evaluation.valid)
             for row in feasible_rows:
                 value = float(evaluation.payoff[int(row), player])
-                action_index = start + int(row)
+                action_index = int(indices[int(row), player])
                 candidate = (
                     action_index,
                     tuple(float(x) for x in evaluation.payoff[int(row)]),

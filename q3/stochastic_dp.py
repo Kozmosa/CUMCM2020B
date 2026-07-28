@@ -36,6 +36,10 @@ from .profile_enum import (
     iter_structured_profile_blocks,
     profiles_from_indices,
 )
+from .pruning import (
+    BestResponsePruningCertificate,
+    RelaxedSinglePlayerUpperBound,
+)
 from .stage_game import (
     ChunkedSearchProgress,
     NoPureEquilibrium,
@@ -94,6 +98,9 @@ class SolverStats:
     raw_joint_profiles: int = 0
     joint_profiles: int = 0
     structured_profiles_pruned: int = 0
+    upper_bound_profiles: int = 0
+    best_response_profiles_pruned: int = 0
+    pruning_certificates_recorded: int = 0
     invalid_profiles: int = 0
     transition_batches: int = 0
     unique_successors: int = 0
@@ -131,11 +138,19 @@ class ExactQ3Solver:
         checkpoint_path: str | os.PathLike[str] | None = None,
         checkpoint_every_states: int = 0,
         checkpoint_every_pairs: int = 0,
+        enable_bound_pruning: bool = True,
+        bound_pruning_slack: float = 1e-6,
+        record_pruning_certificates: bool = False,
+        max_pruning_certificates: int = 10_000,
     ) -> None:
         if workers <= 0:
             raise ValueError("workers must be positive")
         if checkpoint_every_states < 0 or checkpoint_every_pairs < 0:
             raise ValueError("checkpoint intervals cannot be negative")
+        if max_pruning_certificates < 0 or bound_pruning_slack < 0:
+            raise ValueError(
+                "max_pruning_certificates and bound_pruning_slack cannot be negative"
+            )
         self.cfg = cfg
         self.limits = limits or SolverLimits()
         self.equilibrium_atol = equilibrium_atol
@@ -143,6 +158,12 @@ class ExactQ3Solver:
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.checkpoint_every_states = checkpoint_every_states
         self.checkpoint_every_pairs = checkpoint_every_pairs
+        self.enable_bound_pruning = enable_bound_pruning
+        self.bound_pruning_slack = bound_pruning_slack
+        self.record_pruning_certificates = record_pruning_certificates
+        self.max_pruning_certificates = max_pruning_certificates
+        self.pruning_certificates: list[BestResponsePruningCertificate] = []
+        self._upper_bound = RelaxedSinglePlayerUpperBound.build(cfg)
         self.stats = SolverStats()
         self._value_cache: dict[tuple[int, JointState], StateValue] = {}
         self._policy_cache: dict[
@@ -190,6 +211,7 @@ class ExactQ3Solver:
             self._value_cache.clear()
             self._policy_cache.clear()
             self._stage_progress.clear()
+            self.pruning_certificates.clear()
             self._cancel_event.clear()
             self._last_checkpoint_states = 0
             self._last_checkpoint_pairs.clear()
@@ -354,6 +376,82 @@ class ExactQ3Solver:
         )
         return self._evaluate_successors(day + 1, batch.valid, batch.successors)
 
+    def _upper_bounds_from_successors(
+        self,
+        continuation_day: int,
+        valid: np.ndarray,
+        successors: Sequence[JointState | None],
+        player: int,
+    ) -> np.ndarray:
+        bounds = np.full(len(successors), -np.inf, dtype=np.float64)
+        for row in np.flatnonzero(valid):
+            successor = successors[int(row)]
+            if successor is None:
+                raise AssertionError("valid upper-bound transition has no successor")
+            bounds[int(row)] = self._upper_bound.value(
+                continuation_day, successor[player]
+            )
+        self._update_stats(upper_bound_profiles=len(successors))
+        return bounds
+
+    def _day_profile_upper_bounds(
+        self,
+        day: int,
+        state: JointState,
+        weather: Weather,
+        action_sets: Sequence[Sequence[Action]],
+        indices: np.ndarray,
+        player: int,
+    ) -> np.ndarray:
+        self._check_cancelled()
+        profiles = profiles_from_indices(action_sets, indices)
+        batch = apply_joint_transition_batch(self.cfg, state, profiles, weather)
+        return self._upper_bounds_from_successors(
+            day + 1, batch.valid, batch.successors, player
+        )
+
+    def _pruning_callback(self, stage: str, day: int, weather: str):
+        def record(
+            player: int,
+            indices: np.ndarray,
+            upper_bounds: np.ndarray,
+            exact_lower_bound: float,
+        ) -> None:
+            count = len(indices)
+            self._update_stats(best_response_profiles_pruned=count)
+            if not self.record_pruning_certificates or count == 0:
+                return
+            with self._cache_lock:
+                remaining = self.max_pruning_certificates - len(
+                    self.pruning_certificates
+                )
+                if remaining <= 0:
+                    return
+                for row, upper_bound in zip(
+                    indices[:remaining], upper_bounds[:remaining], strict=True
+                ):
+                    certificate = BestResponsePruningCertificate(
+                        stage=stage,
+                        day=day,
+                        weather=weather,
+                        player=player,
+                        profile_index=tuple(int(x) for x in row),
+                        upper_bound=float(upper_bound),
+                        exact_lower_bound=float(exact_lower_bound),
+                        safety_margin=float(
+                            exact_lower_bound
+                            - self.equilibrium_atol
+                            - self.bound_pruning_slack
+                            - float(upper_bound)
+                        ),
+                    )
+                    self.pruning_certificates.append(certificate)
+                self.stats.pruning_certificates_recorded = len(
+                    self.pruning_certificates
+                )
+
+        return record
+
     def _stage_evaluator(
         self,
         day: int,
@@ -462,7 +560,27 @@ class ExactQ3Solver:
             self._stage_evaluator(day, state, weather, action_sets),
             chunk_size=self.limits.profile_chunk_size,
             atol=self.equilibrium_atol,
+            bound_slack=self.bound_pruning_slack,
             workers=workers,
+            upper_bounder=(
+                (
+                    lambda indices, player: self._day_profile_upper_bounds(
+                        day,
+                        state,
+                        weather,
+                        action_sets,
+                        indices,
+                        player,
+                    )
+                )
+                if self.enable_bound_pruning
+                else None
+            ),
+            pruning_callback=(
+                self._pruning_callback("day", day, weather)
+                if self.enable_bound_pruning
+                else None
+            ),
             progress=progress,
             progress_callback=self._stage_progress_callback(key),
         )
@@ -548,6 +666,23 @@ class ExactQ3Solver:
         )
         return self._evaluate_successors(0, valid, successors)
 
+    def _initial_profile_upper_bounds(
+        self,
+        action_sets: Sequence[Sequence[Action]],
+        indices: np.ndarray,
+        player: int,
+    ) -> np.ndarray:
+        self._check_cancelled()
+        state = initial_joint_state(self.cfg)
+        profiles = profiles_from_indices(action_sets, indices)
+        successors: list[JointState | None] = []
+        valid = np.zeros(len(profiles), dtype=bool)
+        for row, actions in enumerate(profiles):
+            post = apply_initial_purchases(self.cfg, state, actions)
+            successors.append(post)
+            valid[row] = post is not None
+        return self._upper_bounds_from_successors(0, valid, successors, player)
+
     def _initial_evaluator(self, action_sets: Sequence[Sequence[Action]]):
         evaluated = 0
         budget_lock = threading.Lock()
@@ -619,7 +754,22 @@ class ExactQ3Solver:
                 evaluator,
                 chunk_size=self.limits.profile_chunk_size,
                 atol=self.equilibrium_atol,
+                bound_slack=self.bound_pruning_slack,
                 workers=workers,
+                upper_bounder=(
+                    (
+                        lambda indices, player: self._initial_profile_upper_bounds(
+                            action_sets, indices, player
+                        )
+                    )
+                    if self.enable_bound_pruning
+                    else None
+                ),
+                pruning_callback=(
+                    self._pruning_callback("initial", 0, "")
+                    if self.enable_bound_pruning
+                    else None
+                ),
                 progress=progress,
                 progress_callback=self._stage_progress_callback(key),
             )
@@ -646,6 +796,7 @@ class ExactQ3Solver:
                 "value_cache": dict(self._value_cache),
                 "policy_cache": dict(self._policy_cache),
                 "stage_progress": dict(self._stage_progress),
+                "pruning_certificates": tuple(self.pruning_certificates),
                 "stats": self.stats,
             }
 
@@ -692,6 +843,7 @@ class ExactQ3Solver:
             self._value_cache = dict(payload["value_cache"])
             self._policy_cache = dict(payload["policy_cache"])
             self._stage_progress = dict(payload["stage_progress"])
+            self.pruning_certificates = list(payload.get("pruning_certificates", ()))
             loaded_stats = payload["stats"]
             normalized_stats = SolverStats()
             for field in fields(SolverStats):
@@ -702,6 +854,7 @@ class ExactQ3Solver:
                         getattr(loaded_stats, field.name),
                     )
             self.stats = normalized_stats
+            self.stats.pruning_certificates_recorded = len(self.pruning_certificates)
             self.stats.checkpoint_loads += 1
             self._last_checkpoint_states = self.stats.states_solved
             self._last_checkpoint_pairs = {

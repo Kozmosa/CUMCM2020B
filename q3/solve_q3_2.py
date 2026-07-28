@@ -60,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint-every-states", type=int, default=0)
     parser.add_argument("--checkpoint-every-pairs", type=int, default=0)
+    parser.add_argument("--disable-bound-pruning", action="store_true")
+    parser.add_argument("--bound-pruning-slack", type=float, default=1e-6)
+    parser.add_argument("--record-pruning-certificates", action="store_true")
+    parser.add_argument("--max-pruning-certificates", type=int, default=1_000)
     return parser
 
 
@@ -96,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint_path=args.checkpoint,
         checkpoint_every_states=args.checkpoint_every_states,
         checkpoint_every_pairs=args.checkpoint_every_pairs,
+        enable_bound_pruning=not args.disable_bound_pruning,
+        bound_pruning_slack=args.bound_pruning_slack,
+        record_pruning_certificates=args.record_pruning_certificates,
+        max_pruning_certificates=args.max_pruning_certificates,
     )
 
     def handle_termination(signum, frame) -> None:
@@ -145,6 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.checkpoint:
             stopped["checkpoint"] = args.checkpoint
+        if args.record_pruning_certificates:
+            stopped["pruning_certificates"] = [
+                asdict(certificate) for certificate in solver.pruning_certificates
+            ]
         solver.close()
         print(json.dumps(stopped, ensure_ascii=False, indent=2))
         return 2
@@ -159,6 +171,10 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.checkpoint:
             interrupted["checkpoint"] = args.checkpoint
+        if args.record_pruning_certificates:
+            interrupted["pruning_certificates"] = [
+                asdict(certificate) for certificate in solver.pruning_certificates
+            ]
         solver.close()
         print(json.dumps(interrupted, ensure_ascii=False, indent=2))
         return 130
@@ -172,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.checkpoint:
         solver.save_checkpoint()
         payload["checkpoint"] = args.checkpoint
+    if args.record_pruning_certificates:
+        payload["pruning_certificates"] = [
+            asdict(certificate) for certificate in solver.pruning_certificates
+        ]
     solver.close()
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

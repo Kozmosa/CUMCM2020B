@@ -1,5 +1,8 @@
 # Q3 exact solver
 
+The correctness argument for state compression, lossless pruning, parallel
+execution, and checkpoints is collected in [[Q3-Exactness]].
+
 This directory contains the exact, lossless core for question 3:
 
 - fixed-point (`scale = 6`) money and terminal payoffs;
@@ -11,6 +14,7 @@ This directory contains the exact, lossless core for question 3:
 - deterministic multiple-equilibrium selection;
 - player-permutation canonicalization and sparse stochastic recursion;
 - lossless action-skeleton filtering before purchase Cartesian products;
+- outward-rounded relaxed single-player upper bounds for certified best-response pruning;
 - blockwise exact best-response and pure-Nash search for large stage games;
 - block-local canonical successor deduplication and configurable workers;
 - atomic value/policy/stage-progress checkpoints with resume support;
@@ -61,6 +65,16 @@ Resume the same calculation:
   --mode level6-state --day 27 --position 22 --water 120 --food 120 \
   --workers 16 --max-states 200000 \
   --checkpoint /tmp/q3-day27.chk --resume
+```
+
+Compare the certified bound pruning against the unpruned exact scan:
+
+```bash
+.venv/bin/python -m q3.solve_q3_2 --mode smoke \
+  --max-profiles 1 --chunk-size 1 --disable-bound-pruning
+.venv/bin/python -m q3.solve_q3_2 --mode smoke \
+  --max-profiles 1 --chunk-size 1 \
+  --record-pruning-certificates --max-pruning-certificates 1000
 ```
 
 On CPython 3.13t the thread backend can execute Python recursion without the
