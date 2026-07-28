@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from itertools import chain
+
+import numpy as np
 
 from .data import Q3Config, Weather
 from .model import (
@@ -30,6 +33,35 @@ def _check_limit(size: int, max_actions: int | None) -> None:
         raise ActionEnumerationLimitExceeded(
             f"exact action enumeration exceeded safety limit {max_actions}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class IndividualActionArrays:
+    """Code-sorted individual actions stored as structure-of-arrays."""
+
+    kind: np.ndarray
+    destination: np.ndarray
+    buy_water: np.ndarray
+    buy_food: np.ndarray
+    skeleton_ranges: tuple[tuple[int, int], ...]
+
+    def __len__(self) -> int:
+        return int(len(self.kind))
+
+    def action_at(self, index: int) -> Action:
+        if index < 0:
+            index += len(self)
+        if not 0 <= index < len(self):
+            raise IndexError("action index out of range")
+        return Action(
+            ActionKind(int(self.kind[index])),
+            destination=int(self.destination[index]),
+            buy_water=int(self.buy_water[index]),
+            buy_food=int(self.buy_food[index]),
+        )
+
+    def action_tuple(self) -> tuple[Action, ...]:
+        return tuple(self.action_at(index) for index in range(len(self)))
 
 
 def _purchase_options(
@@ -125,13 +157,14 @@ def enumerate_individual_actions(
 
     base_w = cfg.water_consume[weather]
     base_f = cfg.food_consume[weather]
+    main_actions = _main_actions(cfg, state, weather)
     actions: list[Action] = []
     for buy_w, buy_f in purchases:
         post_w = state.water + buy_w
         post_f = state.food + buy_f
         if not weight_ok(cfg, post_w, post_f):
             continue
-        for main in _main_actions(cfg, state, weather):
+        for main in main_actions:
             multiplier = _minimum_multiplier(main)
             if post_w < multiplier * base_w or post_f < multiplier * base_f:
                 continue
@@ -149,6 +182,89 @@ def enumerate_individual_actions(
         return (FAIL_ACTION,)
     actions.sort(key=lambda action: action.code)
     return tuple(actions)
+
+
+def enumerate_individual_action_arrays(
+    cfg: Q3Config,
+    state: PlayerState,
+    weather: Weather,
+    *,
+    max_actions: int | None = None,
+) -> IndividualActionArrays:
+    """Enumerate the same exact action set without materializing Action objects."""
+    if state.status is not Status.ACTIVE:
+        return IndividualActionArrays(
+            np.asarray([int(ActionKind.INACTIVE)], dtype=np.int8),
+            np.zeros(1, dtype=np.int16),
+            np.zeros(1, dtype=np.int32),
+            np.zeros(1, dtype=np.int32),
+            ((0, 1),),
+        )
+
+    purchases: Iterator[tuple[int, int]] = iter(((0, 0),))
+    if state.position in cfg.villages:
+        purchases = chain(
+            purchases,
+            _purchase_options(cfg, state, price_factor=2, positive_only=True),
+        )
+    flat_purchases = np.fromiter(
+        (quantity for pair in purchases for quantity in pair),
+        dtype=np.int32,
+    )
+    purchase_pairs = flat_purchases.reshape((-1, 2))
+    purchase_water = purchase_pairs[:, 0]
+    purchase_food = purchase_pairs[:, 1]
+
+    base_w = cfg.water_consume[weather]
+    base_f = cfg.food_consume[weather]
+    kind_chunks: list[np.ndarray] = []
+    destination_chunks: list[np.ndarray] = []
+    water_chunks: list[np.ndarray] = []
+    food_chunks: list[np.ndarray] = []
+    skeleton_ranges: list[tuple[int, int]] = []
+    size = 0
+    for main in sorted(_main_actions(cfg, state, weather), key=lambda action: action.code):
+        multiplier = _minimum_multiplier(main)
+        feasible = (
+            state.water + purchase_water >= multiplier * base_w
+        ) & (
+            state.food + purchase_food >= multiplier * base_f
+        )
+        selected_water = purchase_water[feasible]
+        selected_food = purchase_food[feasible]
+        count = len(selected_water)
+        if count == 0:
+            continue
+        _check_limit(size + count, max_actions)
+        kind_chunks.append(np.full(count, int(main.kind), dtype=np.int8))
+        destination_chunks.append(
+            np.full(count, main.destination, dtype=np.int16)
+        )
+        water_chunks.append(selected_water)
+        food_chunks.append(selected_food)
+        buyer = selected_water + selected_food > 0
+        nonbuyer_count = int(np.count_nonzero(~buyer))
+        if nonbuyer_count:
+            skeleton_ranges.append((size, size + nonbuyer_count))
+        if nonbuyer_count < count:
+            skeleton_ranges.append((size + nonbuyer_count, size + count))
+        size += count
+
+    if size == 0:
+        return IndividualActionArrays(
+            np.asarray([int(ActionKind.FAIL)], dtype=np.int8),
+            np.zeros(1, dtype=np.int16),
+            np.zeros(1, dtype=np.int32),
+            np.zeros(1, dtype=np.int32),
+            ((0, 1),),
+        )
+    return IndividualActionArrays(
+        np.concatenate(kind_chunks),
+        np.concatenate(destination_chunks),
+        np.concatenate(water_chunks),
+        np.concatenate(food_chunks),
+        tuple(skeleton_ranges),
+    )
 
 
 def enumerate_initial_purchases_bounded(

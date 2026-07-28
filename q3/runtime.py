@@ -55,6 +55,7 @@ class BudgetManager:
         max_profiles: int | None = None,
         closeout_seconds: float = 3600.0,
         checkpoint_callback: Callable[[], object] | None = None,
+        rss_sample_seconds: float = 0.1,
     ) -> None:
         for value, label in (
             (wall_seconds, "wall_seconds"),
@@ -66,15 +67,21 @@ class BudgetManager:
                 raise ValueError(f"{label} must be positive")
         if closeout_seconds < 0:
             raise ValueError("closeout_seconds cannot be negative")
+        if rss_sample_seconds < 0:
+            raise ValueError("rss_sample_seconds cannot be negative")
         self.wall_seconds = wall_seconds
         self.memory_bytes = memory_bytes
         self.max_states = max_states
         self.max_profiles = max_profiles
         self.closeout_seconds = closeout_seconds
         self.checkpoint_callback = checkpoint_callback
+        self.rss_sample_seconds = rss_sample_seconds
         self.started = monotonic()
         self._cancelled = threading.Event()
         self._closeout_started = False
+        self._rss_lock = threading.Lock()
+        self._last_rss_sample = float("-inf")
+        self._last_rss_bytes = 0
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -83,12 +90,18 @@ class BudgetManager:
         self.checkpoint_callback = callback
 
     def snapshot(self, *, states: int = 0, profiles: int = 0) -> BudgetSnapshot:
-        elapsed = monotonic() - self.started
+        now = monotonic()
+        elapsed = now - self.started
+        with self._rss_lock:
+            if now - self._last_rss_sample >= self.rss_sample_seconds:
+                self._last_rss_bytes = current_rss_bytes()
+                self._last_rss_sample = now
+            rss_bytes = self._last_rss_bytes
         closing = (
             self.wall_seconds is not None
             and elapsed >= max(0.0, self.wall_seconds - self.closeout_seconds)
         )
-        return BudgetSnapshot(elapsed, current_rss_bytes(), states, profiles, closing)
+        return BudgetSnapshot(elapsed, rss_bytes, states, profiles, closing)
 
     def check(self, *, states: int = 0, profiles: int = 0) -> BudgetSnapshot:
         snap = self.snapshot(states=states, profiles=profiles)

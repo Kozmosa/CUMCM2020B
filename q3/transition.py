@@ -20,6 +20,31 @@ from .model import (
     weight_ok,
 )
 
+try:
+    from numba import njit
+
+    NUMBA_TRANSITION_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional acceleration dependency
+    NUMBA_TRANSITION_AVAILABLE = False
+
+    def njit(*args, **kwargs):
+        def decorate(function):
+            return function
+
+        return decorate
+
+
+_TOPOLOGY_CACHE: dict[
+    int, tuple[Q3Config, np.ndarray, np.ndarray, np.ndarray]
+] = {}
+_STATUS_ACTIVE = int(Status.ACTIVE)
+_ACTION_INACTIVE = int(ActionKind.INACTIVE)
+_ACTION_FAIL = int(ActionKind.FAIL)
+_ACTION_STAY = int(ActionKind.STAY)
+_ACTION_MINE = int(ActionKind.MINE)
+_ACTION_MOVE = int(ActionKind.MOVE)
+_ACTION_INITIAL_BUY = int(ActionKind.INITIAL_BUY)
+
 
 @dataclass(frozen=True, slots=True)
 class InteractionCounts:
@@ -32,6 +57,19 @@ class InteractionCounts:
 class BatchTransitionResult:
     valid: np.ndarray
     successors: tuple[JointState | None, ...]
+    edge_count: np.ndarray
+    mine_count: np.ndarray
+    village_buyer_count: np.ndarray
+
+
+@dataclass(frozen=True)
+class BatchTransitionArrays:
+    valid: np.ndarray
+    kind: np.ndarray
+    position: np.ndarray
+    water: np.ndarray
+    food: np.ndarray
+    cash_scaled: np.ndarray
     edge_count: np.ndarray
     mine_count: np.ndarray
     village_buyer_count: np.ndarray
@@ -225,41 +263,21 @@ def apply_joint_transition_scalar(
     return tuple(out)
 
 
-def apply_joint_transition_batch(
+def _apply_transition_arrays_numpy(
     cfg: Q3Config,
     state: JointState,
-    profiles: Sequence[Sequence[Action]],
     weather: Weather,
-) -> BatchTransitionResult:
-    """Vectorize interaction counts, feasibility checks, and numeric updates."""
-    batch = len(profiles)
+    kind: np.ndarray,
+    destination: np.ndarray,
+    buy_w: np.ndarray,
+    buy_f: np.ndarray,
+) -> BatchTransitionArrays:
+    batch, n = kind.shape
+    if destination.shape != (batch, n) or buy_w.shape != (batch, n) or buy_f.shape != (batch, n):
+        raise ValueError("transition action arrays must have matching shapes")
     n = cfg.n_players
     if len(state) != n:
         raise ValueError("state player count does not match configuration")
-    if batch == 0:
-        empty = np.empty((0, n), dtype=np.int16)
-        return BatchTransitionResult(
-            np.empty(0, dtype=bool), (), empty, empty.copy(), empty.copy()
-        )
-    if any(len(profile) != n for profile in profiles):
-        raise ValueError("profile player count does not match configuration")
-
-    kind = np.asarray(
-        [[int(action.kind) for action in profile] for profile in profiles],
-        dtype=np.int8,
-    )
-    destination = np.asarray(
-        [[action.destination for action in profile] for profile in profiles],
-        dtype=np.int16,
-    )
-    buy_w = np.asarray(
-        [[action.buy_water for action in profile] for profile in profiles],
-        dtype=np.int32,
-    )
-    buy_f = np.asarray(
-        [[action.buy_food for action in profile] for profile in profiles],
-        dtype=np.int32,
-    )
     status = np.asarray([int(player.status) for player in state], dtype=np.int8)
     source = np.asarray([player.position for player in state], dtype=np.int16)
     water0 = np.asarray([player.water for player in state], dtype=np.int32)
@@ -336,11 +354,276 @@ def apply_joint_transition_batch(
     position_next[is_move] = destination[is_move]
 
     valid = player_valid.all(axis=1)
-    successors: list[JointState | None] = [None] * batch
-    for row in np.flatnonzero(valid):
+    return BatchTransitionArrays(
+        valid=valid,
+        kind=kind,
+        position=position_next,
+        water=water_next,
+        food=food_next,
+        cash_scaled=cash_next,
+        edge_count=edge_count,
+        mine_count=mine_count,
+        village_buyer_count=buyer_count,
+    )
+
+
+@njit(cache=True)
+def _apply_transition_arrays_numba(
+    status,
+    source,
+    water0,
+    food0,
+    cash0,
+    kind,
+    destination,
+    buy_w,
+    buy_f,
+    adjacency,
+    is_mine_node,
+    is_village_node,
+    weather_is_storm,
+    base_w,
+    base_f,
+    money_scale,
+    water_price,
+    food_price,
+    water_weight,
+    food_weight,
+    weight_limit,
+    mine_income,
+):
+    batch, n = kind.shape
+    edge_count = np.zeros((batch, n), dtype=np.int16)
+    mine_count = np.zeros((batch, n), dtype=np.int16)
+    buyer_count = np.zeros((batch, n), dtype=np.int16)
+    valid = np.ones(batch, dtype=np.bool_)
+    position_next = np.empty((batch, n), dtype=np.int16)
+    water_next = np.empty((batch, n), dtype=np.int32)
+    food_next = np.empty((batch, n), dtype=np.int32)
+    cash_next = np.empty((batch, n), dtype=np.int64)
+
+    for row in range(batch):
+        for i in range(n):
+            if status[i] != _STATUS_ACTIVE:
+                continue
+            for j in range(n):
+                if status[j] != _STATUS_ACTIVE:
+                    continue
+                if (
+                    kind[row, i] == _ACTION_MOVE
+                    and kind[row, j] == _ACTION_MOVE
+                    and source[i] == source[j]
+                    and destination[row, i] == destination[row, j]
+                ):
+                    edge_count[row, i] += 1
+                if (
+                    kind[row, i] == _ACTION_MINE
+                    and kind[row, j] == _ACTION_MINE
+                    and source[i] == source[j]
+                ):
+                    mine_count[row, i] += 1
+                if (
+                    buy_w[row, i] + buy_f[row, i] > 0
+                    and buy_w[row, j] + buy_f[row, j] > 0
+                    and source[i] == source[j]
+                ):
+                    buyer_count[row, i] += 1
+
+        row_valid = True
+        for i in range(n):
+            position_next[row, i] = source[i]
+            water_next[row, i] = water0[i]
+            food_next[row, i] = food0[i]
+            cash_next[row, i] = cash0[i]
+            action_kind = kind[row, i]
+            is_buyer = buy_w[row, i] + buy_f[row, i] > 0
+            if status[i] != _STATUS_ACTIVE:
+                if action_kind != _ACTION_INACTIVE or is_buyer:
+                    row_valid = False
+                continue
+            if action_kind == _ACTION_FAIL:
+                if is_buyer:
+                    row_valid = False
+                continue
+            if (
+                action_kind == _ACTION_INACTIVE
+                or action_kind == _ACTION_INITIAL_BUY
+            ):
+                row_valid = False
+                continue
+            if is_buyer and not is_village_node[source[i]]:
+                row_valid = False
+                continue
+            if action_kind == _ACTION_MINE and not is_mine_node[source[i]]:
+                row_valid = False
+                continue
+            if action_kind == _ACTION_MOVE:
+                if weather_is_storm or not adjacency[source[i], destination[row, i]]:
+                    row_valid = False
+                    continue
+            elif (
+                action_kind != _ACTION_STAY
+                and action_kind != _ACTION_MINE
+            ):
+                row_valid = False
+                continue
+
+            price_factor = 0
+            if is_buyer:
+                if buyer_count[row, i] <= 0:
+                    row_valid = False
+                    continue
+                price_factor = 2 if buyer_count[row, i] == 1 else 4
+            purchase_cost = (
+                money_scale
+                * price_factor
+                * (water_price * buy_w[row, i] + food_price * buy_f[row, i])
+            )
+            water_pre = water0[i] + buy_w[row, i]
+            food_pre = food0[i] + buy_f[row, i]
+            cash_after_buy = cash0[i] - purchase_cost
+            if (
+                cash_after_buy < 0
+                or water_weight * water_pre + food_weight * food_pre > weight_limit
+            ):
+                row_valid = False
+                continue
+
+            multiplier = 0
+            income = 0
+            next_position = source[i]
+            if action_kind == _ACTION_STAY:
+                multiplier = 1
+            elif action_kind == _ACTION_MINE:
+                if mine_count[row, i] <= 0:
+                    row_valid = False
+                    continue
+                multiplier = 3
+                income = money_scale * mine_income // mine_count[row, i]
+            else:
+                if edge_count[row, i] <= 0:
+                    row_valid = False
+                    continue
+                multiplier = 2 * edge_count[row, i]
+                next_position = destination[row, i]
+            next_water = water_pre - multiplier * base_w
+            next_food = food_pre - multiplier * base_f
+            if next_water < 0 or next_food < 0:
+                row_valid = False
+                continue
+            position_next[row, i] = next_position
+            water_next[row, i] = next_water
+            food_next[row, i] = next_food
+            cash_next[row, i] = cash_after_buy + income
+        valid[row] = row_valid
+    return (
+        valid,
+        position_next,
+        water_next,
+        food_next,
+        cash_next,
+        edge_count,
+        mine_count,
+        buyer_count,
+    )
+
+
+def _transition_topology(cfg: Q3Config) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    cached = _TOPOLOGY_CACHE.get(id(cfg))
+    if cached is not None and cached[0] is cfg:
+        return cached[1:]
+    node_count = max(cfg.nodes) + 1
+    adjacency = np.zeros((node_count, node_count), dtype=np.bool_)
+    is_mine_node = np.zeros(node_count, dtype=np.bool_)
+    is_village_node = np.zeros(node_count, dtype=np.bool_)
+    for source, destinations in cfg.adj.items():
+        adjacency[source, destinations] = True
+    for node in cfg.mines:
+        is_mine_node[node] = True
+    for node in cfg.villages:
+        is_village_node[node] = True
+    cached = (cfg, adjacency, is_mine_node, is_village_node)
+    _TOPOLOGY_CACHE[id(cfg)] = cached
+    return cached[1:]
+
+
+def _apply_transition_arrays(
+    cfg: Q3Config,
+    state: JointState,
+    weather: Weather,
+    kind: np.ndarray,
+    destination: np.ndarray,
+    buy_w: np.ndarray,
+    buy_f: np.ndarray,
+) -> BatchTransitionArrays:
+    if not NUMBA_TRANSITION_AVAILABLE:
+        return _apply_transition_arrays_numpy(
+            cfg, state, weather, kind, destination, buy_w, buy_f
+        )
+    adjacency, is_mine_node, is_village_node = _transition_topology(cfg)
+    status = np.asarray([int(player.status) for player in state], dtype=np.int8)
+    source = np.asarray([player.position for player in state], dtype=np.int16)
+    water0 = np.asarray([player.water for player in state], dtype=np.int32)
+    food0 = np.asarray([player.food for player in state], dtype=np.int32)
+    cash0 = np.asarray([player.cash_scaled for player in state], dtype=np.int64)
+    (
+        valid,
+        position_next,
+        water_next,
+        food_next,
+        cash_next,
+        edge_count,
+        mine_count,
+        buyer_count,
+    ) = _apply_transition_arrays_numba(
+        status,
+        source,
+        water0,
+        food0,
+        cash0,
+        kind,
+        destination,
+        buy_w,
+        buy_f,
+        adjacency,
+        is_mine_node,
+        is_village_node,
+        weather == "sandstorm",
+        cfg.water_consume[weather],
+        cfg.food_consume[weather],
+        cfg.money_scale,
+        cfg.water_price,
+        cfg.food_price,
+        cfg.water_weight,
+        cfg.food_weight,
+        cfg.weight_limit,
+        cfg.mine_income,
+    )
+    return BatchTransitionArrays(
+        valid=valid,
+        kind=kind,
+        position=position_next,
+        water=water_next,
+        food=food_next,
+        cash_scaled=cash_next,
+        edge_count=edge_count,
+        mine_count=mine_count,
+        village_buyer_count=buyer_count,
+    )
+
+
+def materialize_transition_successors(
+    cfg: Q3Config,
+    state: JointState,
+    batch: BatchTransitionArrays,
+    rows: np.ndarray | None = None,
+) -> tuple[JointState | None, ...]:
+    selected = batch.valid if rows is None else batch.valid & rows
+    successors: list[JointState | None] = [None] * len(batch.valid)
+    for row in np.flatnonzero(selected):
         next_players: list[PlayerState] = []
         for i, player in enumerate(state):
-            action_kind = ActionKind(int(kind[row, i]))
+            action_kind = ActionKind(int(batch.kind[row, i]))
             if player.status is not Status.ACTIVE:
                 next_players.append(player)
             elif action_kind is ActionKind.FAIL:
@@ -348,19 +631,146 @@ def apply_joint_transition_batch(
             else:
                 next_player = PlayerState(
                     Status.ACTIVE,
-                    position=int(position_next[row, i]),
-                    water=int(water_next[row, i]),
-                    food=int(food_next[row, i]),
-                    cash_scaled=int(cash_next[row, i]),
+                    position=int(batch.position[row, i]),
+                    water=int(batch.water[row, i]),
+                    food=int(batch.food[row, i]),
+                    cash_scaled=int(batch.cash_scaled[row, i]),
                 )
                 if next_player.position == cfg.end:
                     next_player = finish_player(cfg, next_player)
                 next_players.append(next_player)
         successors[row] = tuple(next_players)
+    return tuple(successors)
+
+
+def apply_unilateral_transition_arrays(
+    cfg: Q3Config,
+    state: JointState,
+    base_actions: Sequence[Action],
+    player: int,
+    deviations: Sequence[Action],
+    weather: Weather,
+) -> BatchTransitionArrays:
+    """Vectorize profiles that differ only in one player's action."""
+    batch = len(deviations)
+    return apply_unilateral_transition_encoded_arrays(
+        cfg,
+        state,
+        base_actions,
+        player,
+        np.fromiter(
+            (int(action.kind) for action in deviations),
+            dtype=np.int8,
+            count=batch,
+        ),
+        np.fromiter(
+            (action.destination for action in deviations),
+            dtype=np.int16,
+            count=batch,
+        ),
+        np.fromiter(
+            (action.buy_water for action in deviations),
+            dtype=np.int32,
+            count=batch,
+        ),
+        np.fromiter(
+            (action.buy_food for action in deviations),
+            dtype=np.int32,
+            count=batch,
+        ),
+        weather,
+    )
+
+
+def apply_unilateral_transition_encoded_arrays(
+    cfg: Q3Config,
+    state: JointState,
+    base_actions: Sequence[Action],
+    player: int,
+    deviation_kind: np.ndarray,
+    deviation_destination: np.ndarray,
+    deviation_buy_water: np.ndarray,
+    deviation_buy_food: np.ndarray,
+    weather: Weather,
+) -> BatchTransitionArrays:
+    """Vectorize unilateral profiles from compact action columns."""
+    if len(base_actions) != cfg.n_players:
+        raise ValueError("base action player count does not match configuration")
+    if not 0 <= player < cfg.n_players:
+        raise ValueError("deviating player index is outside the profile")
+    batch = len(deviation_kind)
+    if any(
+        len(column) != batch
+        for column in (
+            deviation_destination,
+            deviation_buy_water,
+            deviation_buy_food,
+        )
+    ):
+        raise ValueError("deviation action columns have different lengths")
+    base_kind = np.asarray([int(action.kind) for action in base_actions], dtype=np.int8)
+    base_destination = np.asarray(
+        [action.destination for action in base_actions], dtype=np.int16
+    )
+    base_buy_w = np.asarray([action.buy_water for action in base_actions], dtype=np.int32)
+    base_buy_f = np.asarray([action.buy_food for action in base_actions], dtype=np.int32)
+    kind = np.broadcast_to(base_kind, (batch, cfg.n_players)).copy()
+    destination = np.broadcast_to(
+        base_destination, (batch, cfg.n_players)
+    ).copy()
+    buy_w = np.broadcast_to(base_buy_w, (batch, cfg.n_players)).copy()
+    buy_f = np.broadcast_to(base_buy_f, (batch, cfg.n_players)).copy()
+    kind[:, player] = deviation_kind
+    destination[:, player] = deviation_destination
+    buy_w[:, player] = deviation_buy_water
+    buy_f[:, player] = deviation_buy_food
+    return _apply_transition_arrays(
+        cfg, state, weather, kind, destination, buy_w, buy_f
+    )
+
+
+def apply_joint_transition_batch(
+    cfg: Q3Config,
+    state: JointState,
+    profiles: Sequence[Sequence[Action]],
+    weather: Weather,
+) -> BatchTransitionResult:
+    """Vectorize interaction counts, feasibility checks, and numeric updates."""
+    batch = len(profiles)
+    n = cfg.n_players
+    if len(state) != n:
+        raise ValueError("state player count does not match configuration")
+    if batch == 0:
+        empty = np.empty((0, n), dtype=np.int16)
+        return BatchTransitionResult(
+            np.empty(0, dtype=bool), (), empty, empty.copy(), empty.copy()
+        )
+    if any(len(profile) != n for profile in profiles):
+        raise ValueError("profile player count does not match configuration")
+    kind = np.asarray(
+        [[int(action.kind) for action in profile] for profile in profiles],
+        dtype=np.int8,
+    )
+    destination = np.asarray(
+        [[action.destination for action in profile] for profile in profiles],
+        dtype=np.int16,
+    )
+    buy_w = np.asarray(
+        [[action.buy_water for action in profile] for profile in profiles],
+        dtype=np.int32,
+    )
+    buy_f = np.asarray(
+        [[action.buy_food for action in profile] for profile in profiles],
+        dtype=np.int32,
+    )
+    arrays = _apply_transition_arrays(
+        cfg, state, weather, kind, destination, buy_w, buy_f
+    )
+    successors = materialize_transition_successors(cfg, state, arrays)
     return BatchTransitionResult(
-        valid=valid,
-        successors=tuple(successors),
-        edge_count=edge_count,
-        mine_count=mine_count,
-        village_buyer_count=buyer_count,
+        valid=arrays.valid,
+        successors=successors,
+        edge_count=arrays.edge_count,
+        mine_count=arrays.mine_count,
+        village_buyer_count=arrays.village_buyer_count,
     )

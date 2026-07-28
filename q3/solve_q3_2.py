@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -24,6 +26,20 @@ from .stochastic_dp import (
     SearchCancelled,
     SolverLimits,
 )
+
+
+def _gil_enabled() -> bool:
+    return sys._is_gil_enabled() if hasattr(sys, "_is_gil_enabled") else True
+
+
+def _resolve_workers(requested: int | None) -> int:
+    if requested is not None:
+        if requested <= 0:
+            raise ValueError("workers must be positive")
+        return requested
+    if _gil_enabled():
+        return 1
+    return min(16, os.cpu_count() or 1)
 
 
 def _smoke_state(cfg) -> tuple[PlayerState, ...]:
@@ -77,14 +93,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-restricted-rounds", type=int, default=32)
     parser.add_argument("--max-actions", type=int, default=1_000_000)
     parser.add_argument("--max-profiles", type=int, default=250_000)
-    parser.add_argument("--max-states", type=int, default=100_000)
+    parser.add_argument("--max-states", type=int, default=30_000_000)
     parser.add_argument("--chunk-size", type=int, default=4_096)
     parser.add_argument("--max-stage-evaluations", type=int, default=5_000_000)
-    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="successor workers (default: 16 without the GIL, otherwise 1)",
+    )
     parser.add_argument("--checkpoint", type=str)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--checkpoint-every-states", type=int, default=0)
-    parser.add_argument("--checkpoint-every-pairs", type=int, default=0)
+    parser.add_argument("--checkpoint-every-states", type=int, default=1_000_000)
+    parser.add_argument("--checkpoint-every-pairs", type=int, default=100_000)
     parser.add_argument("--disable-bound-pruning", action="store_true")
     parser.add_argument("--bound-pruning-slack", type=float, default=1e-6)
     parser.add_argument("--record-pruning-certificates", action="store_true")
@@ -110,7 +131,14 @@ def _write_output(path: Path | None, payload: dict[str, object]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    cli_args = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(cli_args)
+    try:
+        workers = _resolve_workers(args.workers)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.resume and not args.checkpoint:
+        parser.error("--resume requires --checkpoint")
     if not 0.0 <= args.p_storm < 1.0:
         parser.error("--p-storm must be in [0, 1)")
     remaining = 1.0 - args.p_storm
@@ -151,6 +179,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     started = perf_counter()
 
+    resume_command = None
+    if args.checkpoint:
+        resume_args = [argument for argument in cli_args if argument != "--resume"]
+        resume_command = shlex.join(
+            [sys.executable, "-m", "q3.solve_q3_2", *resume_args, "--resume"]
+        )
+
+    def handle_termination(signum, frame) -> None:
+        budget.cancel()
+
+    signal.signal(signal.SIGTERM, handle_termination)
+
     if args.mode == "level6-initial":
         report = solve_q3_2(
             cfg,
@@ -161,7 +201,13 @@ def main(argv: list[str] | None = None) -> int:
             budget_manager=budget,
             checkpoint=args.checkpoint,
             resume=args.resume,
-            workers=args.workers,
+            workers=workers,
+            checkpoint_every_states=args.checkpoint_every_states,
+            checkpoint_every_pairs=args.checkpoint_every_pairs,
+            enable_bound_pruning=not args.disable_bound_pruning,
+            bound_pruning_slack=args.bound_pruning_slack,
+            record_pruning_certificates=args.record_pruning_certificates,
+            max_pruning_certificates=args.max_pruning_certificates,
         )
         payload = asdict(report)
         payload.update(
@@ -174,12 +220,10 @@ def main(argv: list[str] | None = None) -> int:
                 },
                 "git_commit": _git_commit(),
                 "seed": args.seed,
-                "resume_command": (
-                    f"python -m q3.solve_q3_2 --backend {args.backend} "
-                    f"--mode level6-initial --checkpoint {args.checkpoint} --resume"
-                    if args.checkpoint
-                    else None
-                ),
+                "workers": workers,
+                "gil_enabled": _gil_enabled(),
+                "numba_available": NUMBA_AVAILABLE,
+                "resume_command": resume_command,
             }
         )
         _write_output(args.output, payload)
@@ -203,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     solver_class = ExactQ3Solver if args.backend == "exact" else AdaptiveQ3Solver
     kwargs = dict(
         limits=limits,
-        workers=args.workers,
+        workers=workers,
         checkpoint_path=args.checkpoint,
         checkpoint_every_states=args.checkpoint_every_states,
         checkpoint_every_pairs=args.checkpoint_every_pairs,
@@ -217,14 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         kwargs.update(options=options, quality_target=args.quality_regret)
     solver = solver_class(cfg, **kwargs)
 
-    def handle_termination(signum, frame) -> None:
-        solver.request_stop()
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGTERM, handle_termination)
     if args.resume:
-        if not args.checkpoint:
-            parser.error("--resume requires --checkpoint")
         solver.load_checkpoint()
     try:
         value = solver.solve_state(day, state)
@@ -268,8 +305,9 @@ def main(argv: list[str] | None = None) -> int:
             "elapsed_seconds": perf_counter() - started,
             "numba_available": NUMBA_AVAILABLE,
             "gil_enabled": (
-                sys._is_gil_enabled() if hasattr(sys, "_is_gil_enabled") else True
+                _gil_enabled()
             ),
+            "workers": workers,
             "stats": asdict(solver.stats),
             "git_commit": _git_commit(),
             "seed": args.seed,

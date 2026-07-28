@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--memory-gib", type=float, default=256.0)
     parser.add_argument("--quality-regret", type=float, default=10.0)
     parser.add_argument("--max-actions", type=int, default=1_000_000)
-    parser.add_argument("--max-states", type=int, default=10_000_000)
+    parser.add_argument("--max-states", type=int, default=30_000_000)
     parser.add_argument("--max-stage-evaluations", type=int, default=50_000_000)
     args = parser.parse_args(argv)
     run_sensitivity(

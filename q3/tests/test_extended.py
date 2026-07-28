@@ -10,8 +10,18 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 
-from q3.action_enum import enumerate_individual_actions, enumerate_initial_purchases
-from q3.adaptive import AdaptiveOptions, AdaptiveQ3Solver, solve_q3_2
+from q3.action_enum import (
+    enumerate_individual_action_arrays,
+    enumerate_individual_actions,
+    enumerate_initial_purchases,
+)
+from q3.adaptive import (
+    AdaptiveOptions,
+    AdaptiveQ3Solver,
+    deterministic_array_action_candidates,
+    deterministic_action_candidates,
+    solve_q3_2,
+)
 from q3.data import Q3Config, level5, level6, tiny_level6
 from q3.model import Action, ActionKind, PlayerState, Status
 from q3.open_loop import (
@@ -24,9 +34,19 @@ from q3.pruning import ResourceAwareSinglePlayerUpperBound
 from q3.reports import PolicyEntry
 from q3.runtime import BudgetExceeded, BudgetManager
 from q3.resource_index import ResourceIndex
-from q3.stage_game import minimize_nashconv
+from q3.stage_game import (
+    ProfileBatchEvaluation,
+    minimize_nashconv,
+    pure_nash_indices,
+    select_pure_equilibrium,
+)
 from q3.stochastic_dp import ExactQ3Solver, SolverLimits
 from q3.storage import CompactStateCodec, LayerCache
+from q3.transition import (
+    apply_joint_transition_batch,
+    apply_unilateral_transition_arrays,
+    materialize_transition_successors,
+)
 
 
 def one_step_config(*, n_players: int = 1) -> Q3Config:
@@ -280,6 +300,141 @@ class OpenLoopTests(unittest.TestCase):
 
 
 class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
+    def test_unilateral_transition_arrays_match_general_batch(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=2)
+        state = tuple(
+            PlayerState(
+                Status.ACTIVE,
+                position=2,
+                water=8,
+                food=8,
+                cash_scaled=cfg.init_cash_scaled,
+            )
+            for _ in range(cfg.n_players)
+        )
+        actions = enumerate_individual_actions(cfg, state[0], "sunny")
+        deviations = actions[: min(32, len(actions))]
+        base = tuple(actions[0] for _ in range(cfg.n_players))
+        profiles = []
+        for deviation in deviations:
+            profile = list(base)
+            profile[1] = deviation
+            profiles.append(tuple(profile))
+
+        compact = apply_unilateral_transition_arrays(
+            cfg, state, base, 1, deviations, "sunny"
+        )
+        general = apply_joint_transition_batch(cfg, state, profiles, "sunny")
+        np.testing.assert_array_equal(compact.valid, general.valid)
+        np.testing.assert_array_equal(compact.edge_count, general.edge_count)
+        np.testing.assert_array_equal(compact.mine_count, general.mine_count)
+        np.testing.assert_array_equal(
+            compact.village_buyer_count, general.village_buyer_count
+        )
+        self.assertEqual(
+            materialize_transition_successors(cfg, state, compact),
+            general.successors,
+        )
+
+    def test_vectorized_action_candidates_match_scalar_reference(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=2)
+        state = PlayerState(
+            Status.ACTIVE,
+            position=2,
+            water=0,
+            food=0,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        actions = enumerate_individual_actions(cfg, state, "sunny")
+        warm = actions[3:6]
+
+        def reference(per_skeleton: int) -> tuple[Action, ...]:
+            from q3.adaptive import _action_targets
+            from q3.profile_enum import action_skeleton
+
+            grouped: dict[object, list[Action]] = {}
+            for action in actions:
+                grouped.setdefault(action_skeleton(action), []).append(action)
+            selected = set(action for action in warm if action in actions)
+            for group in grouped.values():
+                group.sort(key=lambda action: action.code)
+                if len(group) <= per_skeleton:
+                    selected.update(group)
+                    continue
+                selected.add(group[0])
+                selected.add(group[-1])
+                max_load = max(
+                    1,
+                    max(
+                        cfg.water_weight * action.buy_water
+                        + cfg.food_weight * action.buy_food
+                        for action in group
+                    ),
+                )
+                for load_target, ratio_target in _action_targets(
+                    max(0, per_skeleton - 2)
+                ):
+                    def distance(
+                        action: Action,
+                    ) -> tuple[float, tuple[int, int, int, int]]:
+                        water_load = cfg.water_weight * action.buy_water
+                        food_load = cfg.food_weight * action.buy_food
+                        load = water_load + food_load
+                        ratio = water_load / load if load else 0.5
+                        return (
+                            abs(load / max_load - load_target)
+                            + abs(ratio - ratio_target),
+                            action.code,
+                        )
+
+                    selected.add(min(group, key=distance))
+                if len([action for action in selected if action in group]) < per_skeleton:
+                    for index in np.linspace(
+                        0, len(group) - 1, per_skeleton, dtype=int
+                    ):
+                        selected.add(group[int(index)])
+                        if (
+                            len([action for action in selected if action in group])
+                            >= per_skeleton
+                        ):
+                            break
+            return tuple(sorted(selected, key=lambda action: action.code))
+
+        for per_skeleton in (3, 5, 12):
+            expected = reference(per_skeleton)
+            self.assertEqual(
+                deterministic_action_candidates(
+                    cfg,
+                    actions,
+                    per_skeleton=per_skeleton,
+                    warm_actions=warm,
+                ),
+                expected,
+            )
+
+    def test_compact_action_arrays_match_object_enumeration_and_candidates(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=2)
+        state = PlayerState(
+            Status.ACTIVE,
+            position=2,
+            water=0,
+            food=0,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        for weather in cfg.weather_order:
+            expected = enumerate_individual_actions(cfg, state, weather)
+            compact = enumerate_individual_action_arrays(cfg, state, weather)
+            self.assertEqual(compact.action_tuple(), expected)
+            for per_skeleton in (3, 5, 12):
+                self.assertEqual(
+                    deterministic_array_action_candidates(
+                        cfg, compact, per_skeleton=per_skeleton
+                    ),
+                    deterministic_action_candidates(
+                        cfg, expected, per_skeleton=per_skeleton
+                    ),
+                )
+
     def test_resource_aware_upper_bound_dominates_exact(self) -> None:
         cfg = tiny_level6(n_players=1)
         bound = ResourceAwareSinglePlayerUpperBound.build(cfg)
@@ -350,6 +505,96 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
             exact.close()
             adaptive.close()
 
+    def test_symmetric_shortcut_matches_full_restricted_tensor(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=2)
+        player = PlayerState(
+            Status.ACTIVE,
+            position=2,
+            water=6,
+            food=6,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        state = tuple(player for _ in range(cfg.n_players))
+        solver = AdaptiveQ3Solver(cfg)
+        try:
+            action_sets = solver._full_action_sets(state, "sunny")
+            evaluator = solver._stage_evaluator(1, state, "sunny", action_sets)
+            symmetric = solver._symmetric_restricted_pure(
+                state, action_sets, evaluator
+            )
+            self.assertIsNotNone(symmetric)
+            payoff, success, valid = solver._restricted_tensor(
+                action_sets, evaluator, symmetric_state=None
+            )
+            dense = select_pure_equilibrium(
+                pure_nash_indices(payoff, valid),
+                payoff,
+                success,
+                action_sets,
+            )
+            self.assertEqual(symmetric, dense)
+        finally:
+            solver.close()
+
+    def test_iterative_pure_shortcut_returns_fully_verified_equilibrium(self) -> None:
+        cfg = one_step_config(n_players=3)
+        stay = Action(ActionKind.STAY)
+        move = Action(ActionKind.MOVE, destination=2)
+        action_sets = tuple((stay, move) for _ in range(cfg.n_players))
+
+        def evaluator(indices: np.ndarray) -> ProfileBatchEvaluation:
+            payoff = np.zeros((len(indices), cfg.n_players), dtype=np.float64)
+            success = np.zeros_like(payoff)
+            unanimous = np.all(indices == indices[:, :1], axis=1)
+            payoff[unanimous] = 1.0
+            success[unanimous] = 1.0
+            return ProfileBatchEvaluation(
+                np.ones(len(indices), dtype=bool), payoff, success
+            )
+
+        solver = AdaptiveQ3Solver(cfg)
+        try:
+            result = solver._iterative_restricted_pure(action_sets, evaluator)
+            self.assertIsNotNone(result)
+            self.assertIn(result.index, ((0, 0, 0), (1, 1, 1)))
+            for player in range(cfg.n_players):
+                indices = np.repeat(
+                    np.asarray(result.index, dtype=np.int64)[None, :],
+                    len(action_sets[player]),
+                    axis=0,
+                )
+                indices[:, player] = np.arange(len(action_sets[player]))
+                evaluation = evaluator(indices)
+                self.assertGreaterEqual(
+                    result.value[player],
+                    float(np.max(evaluation.payoff[:, player])),
+                )
+        finally:
+            solver.close()
+
+    def test_adaptive_workers_are_deterministic(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=2)
+        player = PlayerState(
+            Status.ACTIVE,
+            position=2,
+            water=6,
+            food=6,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        state = tuple(player for _ in range(cfg.n_players))
+        serial = AdaptiveQ3Solver(cfg, workers=1)
+        parallel = AdaptiveQ3Solver(cfg, workers=4)
+        try:
+            self.assertEqual(serial.solve_state(1, state), parallel.solve_state(1, state))
+            for weather in cfg.weather_order:
+                self.assertEqual(
+                    serial.policy_entries_for(1, state, weather),
+                    parallel.policy_entries_for(1, state, weather),
+                )
+        finally:
+            serial.close()
+            parallel.close()
+
     def test_matching_pennies_mixed_fallback(self) -> None:
         payoff = np.zeros((2, 2, 2), dtype=np.float64)
         payoff[:, :, 0] = ((1.0, -1.0), (-1.0, 1.0))
@@ -400,6 +645,37 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
             migrated.load_checkpoint()
             self.assertEqual(migrated.solve_state(1, state), expected)
             migrated.close()
+
+    def test_initial_solver_periodic_checkpoint_and_cancel(self) -> None:
+        cfg = one_step_config()
+        limits = SolverLimits(1_000, 1_000_000, 100_000, 128, 1_000_000)
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            periodic = root / "periodic"
+            report = solve_q3_2(
+                cfg,
+                "adaptive",
+                limits,
+                1e-9,
+                checkpoint=str(periodic),
+                checkpoint_every_states=1,
+            )
+            self.assertTrue(periodic.is_dir())
+            self.assertGreaterEqual(report.stats["checkpoint_writes"], 2)
+
+            cancelled = root / "cancelled"
+            budget = BudgetManager(wall_seconds=60.0)
+            budget.cancel()
+            stopped = solve_q3_2(
+                cfg,
+                "adaptive",
+                limits,
+                1e-9,
+                budget_manager=budget,
+                checkpoint=str(cancelled),
+            )
+            self.assertEqual(stopped.status, "SEARCH_STOPPED")
+            self.assertTrue(cancelled.is_dir())
 
 
 if __name__ == "__main__":

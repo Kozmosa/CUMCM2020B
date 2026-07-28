@@ -22,15 +22,18 @@ This directory now contains the shared exact rule core plus Q3.1 and Q3.2 solver
 - known-weather open-loop replay and best responses that retain every opponent's full state;
 - a compact 67-bit/Numba Q3.1 frontier that removes opponent cash only when the map has no villages;
 - adaptive restricted games with full unilateral-deviation scans and explicit regret bounds;
+- compact structure-of-arrays village action spaces and fused Numba unilateral scans;
+- symmetric-stage reduction and fully verified best-response fixed-point shortcuts;
 - finite-support mixed fallback through deterministic NashConv minimization.
 
 Small stage games use a dense payoff tensor.  Larger games automatically switch
 to a bounded-memory exact best-response scan.  A proven optimistic-reachability
 test removes 31,676 strictly dominated day-0 purchases, leaving 88,925 actions
-per player and about 7.032e14 ordered profiles.  Identical player states share
-one immutable action tuple.  A complete 30-day level-6 solve therefore remains
-a long-running research computation even though the previous tensor-memory
-blocker has been removed.
+per player and about 7.032e14 ordered profiles.  The adaptive backend does not
+enumerate those ordered profiles: it solves small restricted games and certifies
+the selected pure profile against the complete unilateral action space.  A full
+30-day level-6 solve is still a budgeted computation, but the previous tensor,
+Python-action-object, and duplicate-checkpoint blockers have been removed.
 
 ## Commands
 
@@ -70,12 +73,12 @@ uv run python -m q3.solve_q3_2 --backend exact \
   --mode level6-state --day 29 --position 24 --water 60 --food 60
 ```
 
-Run with parallel successor evaluation and an atomic checkpoint:
+Run a late state with an atomic checkpoint and explicit state limit:
 
 ```bash
 uv run python -m q3.solve_q3_2 --backend adaptive \
   --mode level6-state --day 27 --position 22 --water 120 --food 120 \
-  --workers 16 --max-states 200000 \
+  --workers 1 --max-states 200000 \
   --checkpoint /tmp/q3-day27.chk --checkpoint-every-states 20000
 ```
 
@@ -84,7 +87,7 @@ Resume the same calculation:
 ```bash
 uv run python -m q3.solve_q3_2 --backend adaptive \
   --mode level6-state --day 27 --position 22 --water 120 --food 120 \
-  --workers 16 --max-states 200000 \
+  --workers 1 --max-states 200000 \
   --checkpoint /tmp/q3-day27.chk --resume
 ```
 
@@ -98,16 +101,17 @@ Compare the certified bound pruning against the unpruned exact scan:
   --record-pruning-certificates --max-pruning-certificates 1000
 ```
 
-On CPython 3.13t the thread backend can execute Python recursion without the
-GIL.  Numba/llvmlite currently has no compatible wheel in this environment, so
-the free-threaded environment uses the exact NumPy interaction fallback:
+The supported formal environment is ordinary CPython 3.13 with the GIL and
+Numba enabled.  Recreate it with:
 
 ```bash
-uv python install 3.13t
-uv venv .venv-ft --python 3.13t
-uv pip install --python .venv-ft/bin/python 'numpy>=2.4.6,<2.5'
-.venv-ft/bin/python -m q3.solve_q3_2 --mode smoke --workers 16
+uv sync --python 3.13
+.venv/bin/python -c 'import sys; print(sys.version, sys._is_gil_enabled())'
 ```
+
+The CLI automatically uses one Python worker when the GIL is enabled.  Setting
+more workers on ordinary CPython usually slows recursive state evaluation;
+Numba and NumPy still accelerate the large numeric batches internally.
 
 Attempting the full initial-purchase game is allowed only through explicit
 limits.  The formal adaptive command is:
@@ -116,17 +120,35 @@ limits.  The formal adaptive command is:
 uv run python -m q3.solve_q3_2 \
   --backend adaptive --mode level6-initial \
   --quality-regret 10 --wall-hours 24 --memory-gib 256 \
-  --equilibrium pure-mixed \
+  --equilibrium pure-mixed --workers 1 \
+  --max-states 30000000 --max-stage-evaluations 50000000 \
   --checkpoint q3/output/level6.chk \
+  --checkpoint-every-states 1000000 \
   --output q3/output/level6
 ```
 
 Exceeding a budget returns `SEARCH_STOPPED` with an explicit unresolved gap;
 it never labels a finite candidate set as an exact solution.
 
-Numba is included in the UV environment and activates the cached `@njit`
-interaction-counting kernel automatically.  `interaction.py` retains an
-identical NumPy fallback for environments where Numba is unavailable.  This
-accelerates a tested hot kernel without changing solver semantics, but the
-full solve still needs stronger proven value bounds to reduce the enormous
-day-0 best-response search.
+Numba is included in the UV environment and activates the fused transition
+kernel automatically.  `transition.py` retains an identical NumPy fallback.
+The compact village action representation stores integer columns rather than
+hundreds of thousands of Python objects and materializes only selected or
+profitable actions.
+
+## Current CPython 3.13 profile
+
+On the reference 128-core/A800 host, using one Python worker:
+
+- day-29 village state: 5.19 s before compact action arrays, 0.84 s after;
+- five-minute root probe: 101,534 solved states and 681.5 million complete
+  unilateral deviations, with 729 MiB peak RSS;
+- the 101,534-state v2 checkpoint is 21 MiB (about 215 bytes/state in that
+  layer mix).  A long-run checkpoint should be budgeted at roughly
+  0.2--0.4 KiB per cached state, so 10 million states are about 2--4 GiB.
+
+The same probe does not establish the total number of states required for the
+root certificate.  At its observed average, 10 million states would take about
+8.2 hours and a 24-hour run could visit roughly 29 million states, but later
+village distributions may change that rate.  The formal result is therefore
+still gated by the reported root regret upper bound, not by elapsed time alone.
