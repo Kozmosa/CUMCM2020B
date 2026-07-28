@@ -33,8 +33,8 @@ $$
 3. 村庄购买默认采用 Q1/Q2 的 `start_of_day` 语义：当天开始时已在村庄，先购买，再执行当天主要行动。
 4. 到达终点后该玩家的游戏结束，不再参与后续道路、矿山和村庄人数统计。
 5. 成功支付为终点现金加剩余资源半价退款；失败支付与最新 Q2 保持一致，取失败时现金减去 $M$。
-6. 外层使用迭代最佳反应；固定其他玩家策略时，玩家 $i$ 的最佳反应使用 Q1 型前向动态规划计算。
-7. 最佳反应阶段把其他玩家已承诺的行动序列视为固定时间表；最终均衡候选必须通过联合回放，确认所有被承诺的行动在实际多人消耗下均可执行。
+6. 外层使用迭代最佳反应与策略级 double-oracle；每次最佳反应都同步推进偏离者和所有对手的完整状态。
+7. 其他玩家承诺的是固定**行动序列**，不是固定状态轨迹。偏离者改变道路人数后，可能改变对手消耗、使其提前失败，并进一步改变后续交互人数；因此不能预先生成与偏离无关的外部性表。
 
 第五关有 $n=3$ 名玩家、$T=10$，地图与第三关相同，没有村庄。因此第五关的最佳反应内核只需处理：
 
@@ -192,88 +192,34 @@ $$
 
 ---
 
-## 6. 固定其他玩家后的交互参数
+## 6. 固定行动序列后的同步状态
 
-计算玩家 $i$ 的最佳反应时，固定其他玩家策略 $\Pi_{-i}$，预先汇总其他玩家的行动事件。
-
-### 6.1 同路人数表
-
-定义其他玩家在第 $t$ 天从 $u$ 移动到 $v$ 的人数：
+计算玩家 $i$ 的最佳反应时，只固定 $\Pi_{-i}$ 中各日将要尝试的行动。DP 状态必须同时保存：
 
 $$
-m_{-i,t}^{E}(u,v)
-=\sum_{j\ne i}
-\mathbf 1\{v_{j,t-1}=u,
-z_{j,t}=\operatorname{move}(v)\}.
+(S_{i,t},S_{-i,t}),
 $$
 
-若玩家 $i$ 也从 $u$ 移动到 $v$，总人数为
+其中每个对手状态均包含位置、库存、现金以及活动/完成/失败标记。每天先根据当前联合状态和所有当日行动重新统计同路、同矿和同村购买人数，再同步转移所有玩家。若偏离导致对手库存不足，对手当日失败并从以后的人数统计中移除。
+
+因此，旧版“先沿原策略回放对手，再把同路人数、同矿人数作为固定时间表”的做法并不正确。它会漏掉如下真实偏离链：
 
 $$
-k_t^E(u,v)=1+m_{-i,t}^{E}(u,v),
+\text{偏离加入同一路段}
+\Rightarrow\text{对手消耗增加}
+\Rightarrow\text{对手提前失败}
+\Rightarrow\text{后续道路或矿山人数改变}.
 $$
-
-玩家 $i$ 的移动消耗倍率为
-
-$$
-\lambda_{i,t}^{\mathrm{move}}(u,v)
-=2\left(1+m_{-i,t}^{E}(u,v)\right).
-$$
-
-### 6.2 同矿人数表
-
-定义其他玩家在矿山 $m$ 挖矿的人数：
-
-$$
-m_{-i,t}^{M}(m)
-=\sum_{j\ne i}
-\mathbf 1\{v_{j,t-1}=m,
-z_{j,t}=\operatorname{mine}\}.
-$$
-
-玩家 $i$ 在该矿山挖矿时：
-
-$$
-k_t^M(m)=1+m_{-i,t}^{M}(m),
-\qquad
-R_{i,t}=\frac{R}{k_t^M(m)}.
-$$
-
-挖矿资源消耗倍率始终为 $3$，不随人数改变。
-
-### 6.3 村庄购买价格表
-
-一般关卡中，定义
-
-$$
-b_{-i,t}^{V}(v)
-=\mathbf 1\{\text{第 }t\text{ 天有其他玩家在村庄 }v\text{ 购买}\}.
-$$
-
-玩家 $i$ 在该村庄购买时的价格为
-
-$$
-(p_{W,i,t},p_{F,i,t})
-=
-\begin{cases}
-(2p_W,2p_F),&b_{-i,t}^{V}(v)=0,\\
-(4p_W,4p_F),&b_{-i,t}^{V}(v)=1.
-\end{cases}
-$$
-
-第五关没有村庄，因此该表为空。
-
-这些数组都只依赖时间、地点和固定的其他玩家策略，可在每次最佳反应 DP 前一次性生成。
 
 ---
 
 ## 7. 最佳反应：前向动态规划
 
-固定 $\Pi_{-i}$ 后，玩家 $i$ 的问题仍使用 Q1 的现金压缩：
+固定 $\Pi_{-i}$ 后，在**对手完整状态、偏离者位置和库存相同**时，玩家 $i$ 的现金仍可单调压缩：
 
 $$
-\operatorname{cash}_t(v,W,F)
-=\max\{C:\text{玩家 }i\text{ 在第 }t\text{ 天结束时处于 }(v,W,F,C)\}.
+\operatorname{cash}_t(S_{-i},v,W,F)
+=\max\{C:\text{联合状态的其余分量相同}\}.
 $$
 
 在固定库存和位置下，更高现金不会降低可行性，终点支付也随现金单调增加，因此只保留最大现金仍然是精确的。
@@ -305,7 +251,7 @@ $$
 (c_W(\theta_t),c_F(\theta_t)).
 $$
 
-对每个节点 $v$ 的整张库存平面执行以下转移。
+对前沿中的每个联合状态，枚举偏离者行动，并与对手第 $t$ 日承诺行动组成联合行动。交互人数必须从该联合状态即时计算。
 
 #### 停留
 
@@ -314,17 +260,14 @@ $$
 =\left(c_W(\theta_t),c_F(\theta_t)\right),
 $$
 
-```text
-next[v, :-cW, :-cF]
-    = maximum(next[v, :-cW, :-cF], cash[v, cW:, cF:])
-```
+停留不产生道路交互；随后同步扣除所有活动玩家的基础消耗。
 
 #### 移动
 
-对每个邻接点 $u\in N(v)$，先读取预计算同路人数：
+对每个邻接点 $u\in N(v)$，按当前联合行动统计同向同边移动人数 $k_t^E(v,u)$：
 
 $$
-\lambda=2\left(1+m_{-i,t}^E(v,u)\right),
+\lambda=2k_t^E(v,u),
 $$
 
 再令
@@ -335,29 +278,21 @@ c_W=\lambda c_W(\theta_t),
 c_F=\lambda c_F(\theta_t),
 $$
 
-并把切片写入 `next[u]`。沙暴日不生成移动转移。
+并同步更新所有走该边的玩家。沙暴日不生成移动转移。
 
 #### 挖矿
 
 仅当玩家在当天开始时已经位于矿山，才允许挖矿。消耗为基础消耗的 3 倍，收入为
 
 $$
-R_{i,t}=\frac{R}{1+m_{-i,t}^{M}(v)}.
+R_{i,t}=\frac{R}{k_t^M(v)}.
 $$
 
-定点化后转移为
-
-```text
-candidate = cash[v, 3*cW:, 3*cF:] + income_scaled[t, v]
-```
+其中 $k_t^M(v)$ 同样从当前仍活动且当日选择挖矿的玩家中即时统计。
 
 ### 7.3 村庄购买
 
-一般关卡在 `start_of_day` 模式下，先根据其他玩家是否同时购买确定单价，再调用 Q1 的 `BuyKnapsack`：
-
-```text
-work[v] = BuyKnapsack(cash[v], village_price[t, v])
-```
+一般关卡在 `start_of_day` 模式下，按当前联合行动中的购买人数确定 2 倍或 4 倍单价；不能沿原轨迹预先固定价格。
 
 第五关没有村庄，不执行此步骤。
 
@@ -398,37 +333,20 @@ cash_after
 
 ```text
 best_response(player_i, profile):
-    externality = build_externality_tables(profile without player_i)
-
-    cash = NEG
-    cash[start] = day0_purchase(base_price)
-    best_terminal = none
+    frontier = every feasible day-0 purchase of player_i
+    # key retains all opponent state and deviator position/inventory;
+    # value retains the maximum deviator cash.
 
     for t = 1 .. T:
-        work = cash
-
-        if start_of_day village purchase is available:
-            for village v:
-                price = externality.village_price[t, v]
-                work[v] = buy_knapsack(cash[v], price)
-
-        next = NEG
-
-        for node v:
-            apply stay transition
-
-            if v is a mine:
-                income = externality.mine_income[t, v]
-                apply mine transition
-
-            if weather[t] is not sandstorm:
-                for u in adjacency[v]:
-                    multiplier = externality.move_multiplier[t, v, u]
-                    apply move transition v -> u
-
-        update best terminal state
-        save parent information
-        cash = next
+        next = empty compressed frontier
+        for joint_state in frontier:
+            for deviator_action in exact_actions(joint_state[player_i]):
+                actions = fixed opponent actions at t + deviator_action
+                counts = recompute_interactions(joint_state, actions)
+                successor = synchronously_transition_every_player(...)
+                compress only if opponent states and deviator position/inventory match
+                save parent pointer
+        frontier = next
 
     return backtrack(best_terminal)
 ```
@@ -675,7 +593,7 @@ Q1 的地图无关 DP 逻辑可以提取为公共工具，但不应直接修改 
 1. 读取第三关地图和第五关参数、天气序列。
 2. 建立三名玩家的独立单人最优初始策略。
 3. 联合回放初始策略组合，计算真实交互人数和支付。
-4. 固定玩家 2、3，构造玩家 1 的交互参数表并运行最佳反应 DP。
+4. 固定玩家 2、3 的行动序列，在最佳反应 DP 中同步跟踪其完整状态。
 5. 接受玩家 1 的改进策略并重新联合回放。
 6. 依次对玩家 2、3 重复最佳反应更新。
 7. 重复整轮更新，直到最大策略改进量不超过 $\varepsilon$。

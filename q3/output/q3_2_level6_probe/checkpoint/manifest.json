@@ -1,0 +1,93 @@
+{
+  "config_digest": "f3669226d361aa047bb79a8eaa9a8b2a3711c696c5f48e822240276530eee726",
+  "layers": [
+    {
+      "day": 0,
+      "file": "day-000.npz",
+      "rows": 1
+    },
+    {
+      "day": 1,
+      "file": "day-001.npz",
+      "rows": 2
+    },
+    {
+      "day": 2,
+      "file": "day-002.npz",
+      "rows": 8
+    },
+    {
+      "day": 3,
+      "file": "day-003.npz",
+      "rows": 31
+    },
+    {
+      "day": 4,
+      "file": "day-004.npz",
+      "rows": 51
+    },
+    {
+      "day": 5,
+      "file": "day-005.npz",
+      "rows": 55
+    },
+    {
+      "day": 6,
+      "file": "day-006.npz",
+      "rows": 34
+    },
+    {
+      "day": 7,
+      "file": "day-007.npz",
+      "rows": 18
+    },
+    {
+      "day": 8,
+      "file": "day-008.npz",
+      "rows": 9
+    },
+    {
+      "day": 9,
+      "file": "day-009.npz",
+      "rows": 4
+    },
+    {
+      "day": 10,
+      "file": "day-010.npz",
+      "rows": 2
+    },
+    {
+      "day": 11,
+      "file": "day-011.npz",
+      "rows": 1
+    }
+  ],
+  "stats": {
+    "action_enumerations": 0,
+    "action_set_reuses": 0,
+    "best_response_profiles_pruned": 0,
+    "cache_hits": 2822,
+    "cache_waits": 0,
+    "checkpoint_loads": 1,
+    "checkpoint_writes": 2,
+    "chunked_stage_games": 0,
+    "dense_stage_games": 0,
+    "duplicate_successors": 0,
+    "invalid_profiles": 0,
+    "joint_profiles": 982,
+    "max_actions_seen": 0,
+    "max_joint_profiles_seen": 0,
+    "opponent_pairs_completed": 0,
+    "peak_rss_bytes": 196202496,
+    "pruning_certificates_recorded": 0,
+    "pure_equilibria": 0,
+    "raw_joint_profiles": 0,
+    "stage_games": 0,
+    "states_solved": 216,
+    "structured_profiles_pruned": 0,
+    "transition_batches": 630,
+    "unique_successors": 3012,
+    "upper_bound_profiles": 2124
+  },
+  "version": 2
+}

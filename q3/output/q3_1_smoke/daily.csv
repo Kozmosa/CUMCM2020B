@@ -1,0 +1,7 @@
+day,weather,player,action,status,position,water,food,cash
+1,sunny,1,move:2,ACTIVE,2,2,2,28.0
+1,sunny,2,fail,FAILED,0,0,0,0.0
+1,sunny,3,move:2,ACTIVE,2,0,4,28.0
+2,sunny,1,move:3+W2/F2,FINISHED,0,0,0,0.0
+2,sunny,2,inactive,FAILED,0,0,0,0.0
+2,sunny,3,move:3+W4/F0,FINISHED,0,0,0,0.0

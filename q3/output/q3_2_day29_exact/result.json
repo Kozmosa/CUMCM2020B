@@ -1,0 +1,63 @@
+{
+  "status": "EXACT_SELECTED",
+  "backend": "exact",
+  "value": [
+    -89839.5,
+    -89839.5,
+    -89839.5
+  ],
+  "success": [
+    0.9,
+    0.9,
+    0.9
+  ],
+  "policy": {
+    "sunny": [
+      "move:25",
+      "move:25",
+      "move:25"
+    ],
+    "hot": [
+      "move:25",
+      "move:25",
+      "move:25"
+    ],
+    "sandstorm": [
+      "stay",
+      "stay",
+      "stay"
+    ]
+  },
+  "elapsed_seconds": 0.18646646291017532,
+  "numba_available": true,
+  "gil_enabled": true,
+  "stats": {
+    "states_solved": 42,
+    "cache_hits": 0,
+    "cache_waits": 0,
+    "stage_games": 3,
+    "action_enumerations": 3,
+    "action_set_reuses": 6,
+    "dense_stage_games": 3,
+    "chunked_stage_games": 0,
+    "raw_joint_profiles": 129,
+    "joint_profiles": 129,
+    "structured_profiles_pruned": 0,
+    "upper_bound_profiles": 0,
+    "best_response_profiles_pruned": 0,
+    "pruning_certificates_recorded": 0,
+    "invalid_profiles": 0,
+    "transition_batches": 3,
+    "unique_successors": 41,
+    "duplicate_successors": 88,
+    "pure_equilibria": 3,
+    "opponent_pairs_completed": 0,
+    "max_actions_seen": 4,
+    "max_joint_profiles_seen": 64,
+    "checkpoint_writes": 0,
+    "checkpoint_loads": 0,
+    "peak_rss_bytes": 187416576
+  },
+  "git_commit": "1166cb9d1477f1ac5aa69577ac0af31d9ec58436",
+  "seed": 20260728
+}

@@ -1,0 +1,87 @@
+{
+  "status": "SEARCH_STOPPED",
+  "value_lower": [
+    "-Infinity",
+    "-Infinity",
+    "-Infinity"
+  ],
+  "value_upper": [
+    "Infinity",
+    "Infinity",
+    "Infinity"
+  ],
+  "success": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "max_regret_lower": 0.0,
+  "max_regret_upper": "Infinity",
+  "selection_complete": false,
+  "policy": {
+    "error": "wall-clock budget reached 5.6 seconds"
+  },
+  "stats": {
+    "states_solved": 216,
+    "cache_hits": 2809,
+    "cache_waits": 0,
+    "stage_games": 0,
+    "action_enumerations": 0,
+    "action_set_reuses": 0,
+    "dense_stage_games": 0,
+    "chunked_stage_games": 0,
+    "raw_joint_profiles": 0,
+    "joint_profiles": 935,
+    "structured_profiles_pruned": 0,
+    "upper_bound_profiles": 2124,
+    "best_response_profiles_pruned": 0,
+    "pruning_certificates_recorded": 0,
+    "invalid_profiles": 0,
+    "transition_batches": 624,
+    "unique_successors": 3012,
+    "duplicate_successors": 0,
+    "pure_equilibria": 0,
+    "opponent_pairs_completed": 0,
+    "max_actions_seen": 0,
+    "max_joint_profiles_seen": 0,
+    "checkpoint_writes": 1,
+    "checkpoint_loads": 0,
+    "peak_rss_bytes": 195829760,
+    "adaptive": {
+      "restricted_rounds": 625,
+      "restricted_profiles": 888,
+      "full_deviation_actions": 2124,
+      "deviation_actions_pruned": 0,
+      "deviation_actions_evaluated": 2124,
+      "candidates_added": 0,
+      "certified_stages": 618,
+      "approximate_mixed_stages": 0,
+      "max_stage_regret_upper": 0.0
+    }
+  },
+  "checkpoint": "q3/output/q3_2_level6_probe/checkpoint",
+  "backend": "adaptive",
+  "player_regret_lower": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "player_regret_upper": [
+    "Infinity",
+    "Infinity",
+    "Infinity"
+  ],
+  "elapsed_seconds": 5.616847343742847,
+  "config": {
+    "name": "level6",
+    "failure_penalty": 1000000,
+    "p_weather": {
+      "sunny": 0.5,
+      "hot": 0.4,
+      "sandstorm": 0.1
+    }
+  },
+  "git_commit": "1166cb9d1477f1ac5aa69577ac0af31d9ec58436",
+  "seed": 20260728,
+  "resume_command": "python -m q3.solve_q3_2 --backend adaptive --mode level6-initial --checkpoint q3/output/q3_2_level6_probe/checkpoint --resume"
+}

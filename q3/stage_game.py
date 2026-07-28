@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from itertools import product
 
 import numpy as np
+from scipy.optimize import minimize
 
 from .model import Action
 
@@ -28,6 +30,15 @@ class ProfileBatchEvaluation:
     valid: np.ndarray
     payoff: np.ndarray
     success: np.ndarray
+
+
+@dataclass(frozen=True)
+class MixedEquilibrium:
+    probabilities: tuple[tuple[float, ...], ...]
+    value: tuple[float, ...]
+    regrets: tuple[float, ...]
+    nash_conv: float
+    success: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,175 @@ def verify_pure_equilibrium(
         if current < best - atol:
             return False, f"player {player} can improve {current} -> {best}"
     return True, "OK"
+
+
+def _profile_probability(probabilities: Sequence[np.ndarray]) -> np.ndarray:
+    weight = np.asarray(1.0)
+    for player, probability in enumerate(probabilities):
+        shape = [1] * len(probabilities)
+        shape[player] = len(probability)
+        weight = weight * probability.reshape(shape)
+    return np.asarray(weight, dtype=np.float64)
+
+
+def independent_mixture_values(
+    payoff: np.ndarray,
+    probabilities: Sequence[Sequence[float]],
+    *,
+    valid: np.ndarray | None = None,
+    success: np.ndarray | None = None,
+) -> tuple[tuple[float, ...], tuple[float, ...], tuple[float, ...]]:
+    """Return expected payoff, success, and unilateral regrets.
+
+    Coupled-infeasible profiles receive a deterministic very-low utility.  In
+    the intended adaptive use, support expansion keeps their probability at
+    zero; the convention mainly makes the optimizer robust on arbitrary test
+    games.
+    """
+    n_players = payoff.shape[-1]
+    action_shape = payoff.shape[:-1]
+    if len(action_shape) != n_players:
+        raise ValueError("one action axis is required per player")
+    arrays = tuple(np.asarray(p, dtype=np.float64) for p in probabilities)
+    if tuple(len(p) for p in arrays) != action_shape:
+        raise ValueError("mixed strategy shape does not match payoff tensor")
+    if valid is None:
+        valid = np.ones(action_shape, dtype=bool)
+    if valid.shape != action_shape:
+        raise ValueError("valid mask shape does not match payoff tensor")
+
+    finite = payoff[np.isfinite(payoff)]
+    floor = (float(np.min(finite)) - 1e6) if finite.size else -1e12
+    effective = np.where(valid[..., None], payoff, floor)
+    profile_weight = _profile_probability(arrays)
+    values = tuple(
+        float(np.sum(profile_weight * effective[..., player]))
+        for player in range(n_players)
+    )
+    success_values: tuple[float, ...] = ()
+    if success is not None:
+        success_values = tuple(
+            float(np.sum(profile_weight * success[..., player]))
+            for player in range(n_players)
+        )
+
+    regrets: list[float] = []
+    for player in range(n_players):
+        action_values = np.empty(action_shape[player], dtype=np.float64)
+        opponents = tuple(i for i in range(n_players) if i != player)
+        opponent_shape = tuple(action_shape[i] for i in opponents)
+        for action in range(action_shape[player]):
+            total = 0.0
+            for opponent_index in np.ndindex(opponent_shape):
+                index = [0] * n_players
+                index[player] = action
+                probability = 1.0
+                for opponent, opponent_action in zip(
+                    opponents, opponent_index, strict=True
+                ):
+                    index[opponent] = opponent_action
+                    probability *= arrays[opponent][opponent_action]
+                total += probability * effective[tuple(index) + (player,)]
+            action_values[action] = total
+        regrets.append(max(0.0, float(np.max(action_values)) - values[player]))
+    return values, success_values, tuple(regrets)
+
+
+def minimize_nashconv(
+    payoff: np.ndarray,
+    *,
+    valid: np.ndarray | None = None,
+    success: np.ndarray | None = None,
+    seed: int = 20260728,
+    starts: int = 8,
+    max_iterations: int = 2_000,
+) -> MixedEquilibrium:
+    """Deterministically minimize NashConv over independent finite mixtures."""
+    n_players = payoff.shape[-1]
+    action_shape = payoff.shape[:-1]
+    if len(action_shape) != n_players or any(count <= 0 for count in action_shape):
+        raise ValueError("invalid normal-form payoff shape")
+    offsets = np.cumsum((0,) + action_shape)
+
+    def unpack(vector: np.ndarray) -> tuple[np.ndarray, ...]:
+        return tuple(
+            vector[offsets[player] : offsets[player + 1]]
+            for player in range(n_players)
+        )
+
+    def objective(vector: np.ndarray) -> float:
+        probabilities = unpack(vector)
+        _, _, regrets = independent_mixture_values(
+            payoff, probabilities, valid=valid, success=success
+        )
+        return float(sum(regrets))
+
+    constraints = tuple(
+        {
+            "type": "eq",
+            "fun": lambda vector, player=player: float(
+                np.sum(vector[offsets[player] : offsets[player + 1]]) - 1.0
+            ),
+        }
+        for player in range(n_players)
+    )
+    bounds = tuple((0.0, 1.0) for _ in range(int(offsets[-1])))
+    rng = np.random.default_rng(seed)
+    initial: list[np.ndarray] = [
+        np.concatenate(
+            [np.full(count, 1.0 / count, dtype=np.float64) for count in action_shape]
+        )
+    ]
+    # Pure starts expose easy equilibria; seeded Dirichlet starts cover games
+    # such as matching pennies where the uniform point is already optimal.
+    pure_profiles = list(product(*(range(count) for count in action_shape)))
+    for profile in pure_profiles[: max(0, starts // 2)]:
+        vector = np.zeros(int(offsets[-1]), dtype=np.float64)
+        for player, action in enumerate(profile):
+            vector[offsets[player] + action] = 1.0
+        initial.append(vector)
+    while len(initial) < starts:
+        initial.append(
+            np.concatenate([rng.dirichlet(np.ones(count)) for count in action_shape])
+        )
+
+    best_vector = initial[0]
+    best_objective = objective(best_vector)
+    for vector in initial[:starts]:
+        result = minimize(
+            objective,
+            vector,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"maxiter": max_iterations, "ftol": 1e-12, "disp": False},
+        )
+        candidate = np.asarray(result.x if result.success else vector, dtype=np.float64)
+        # Remove numerical simplex drift before reporting or comparing.
+        for player in range(n_players):
+            block = candidate[offsets[player] : offsets[player + 1]]
+            np.maximum(block, 0.0, out=block)
+            total = float(np.sum(block))
+            if total <= 0.0:
+                block[:] = 1.0 / len(block)
+            else:
+                block /= total
+        score = objective(candidate)
+        if score < best_objective - 1e-12:
+            best_objective = score
+            best_vector = candidate.copy()
+
+    probabilities = unpack(best_vector)
+    values, successes, regrets = independent_mixture_values(
+        payoff, probabilities, valid=valid, success=success
+    )
+    return MixedEquilibrium(
+        probabilities=tuple(tuple(float(x) for x in p) for p in probabilities),
+        value=values,
+        success=successes,
+        regrets=regrets,
+        nash_conv=float(sum(regrets)),
+    )
 
 
 def _joint_action_code(

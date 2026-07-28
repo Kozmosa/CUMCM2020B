@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import pickle
+import hashlib
+import json
+import shutil
 import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from math import prod
 from pathlib import Path
 from typing import Self
@@ -26,6 +29,7 @@ from .model import (
     JointState,
     PlayerState,
     StateValue,
+    Status,
     all_absorbed,
     initial_joint_state,
     terminal_state_value,
@@ -38,8 +42,9 @@ from .profile_enum import (
 )
 from .pruning import (
     BestResponsePruningCertificate,
-    RelaxedSinglePlayerUpperBound,
+    ResourceAwareSinglePlayerUpperBound,
 )
+from .runtime import BudgetExceeded, BudgetManager
 from .stage_game import (
     ChunkedSearchProgress,
     NoPureEquilibrium,
@@ -52,7 +57,8 @@ from .stage_game import (
 )
 from .transition import apply_initial_purchases, apply_joint_transition_batch
 
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
+LEGACY_CHECKPOINT_VERSION = 1
 
 
 class ResourceLimitExceeded(RuntimeError):
@@ -111,6 +117,7 @@ class SolverStats:
     max_joint_profiles_seen: int = 0
     checkpoint_writes: int = 0
     checkpoint_loads: int = 0
+    peak_rss_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -142,6 +149,7 @@ class ExactQ3Solver:
         bound_pruning_slack: float = 1e-6,
         record_pruning_certificates: bool = False,
         max_pruning_certificates: int = 10_000,
+        budget_manager: BudgetManager | None = None,
     ) -> None:
         if workers <= 0:
             raise ValueError("workers must be positive")
@@ -162,8 +170,9 @@ class ExactQ3Solver:
         self.bound_pruning_slack = bound_pruning_slack
         self.record_pruning_certificates = record_pruning_certificates
         self.max_pruning_certificates = max_pruning_certificates
+        self.budget_manager = budget_manager
         self.pruning_certificates: list[BestResponsePruningCertificate] = []
-        self._upper_bound = RelaxedSinglePlayerUpperBound.build(cfg)
+        self._upper_bound = ResourceAwareSinglePlayerUpperBound.build(cfg)
         self.stats = SolverStats()
         self._value_cache: dict[tuple[int, JointState], StateValue] = {}
         self._policy_cache: dict[
@@ -182,6 +191,8 @@ class ExactQ3Solver:
             if workers > 1
             else None
         )
+        if self.budget_manager is not None and self.checkpoint_path is not None:
+            self.budget_manager.set_checkpoint_callback(self.save_checkpoint)
 
     def close(self) -> None:
         if self._successor_executor is not None:
@@ -190,10 +201,23 @@ class ExactQ3Solver:
 
     def request_stop(self) -> None:
         self._cancel_event.set()
+        if self.budget_manager is not None:
+            self.budget_manager.cancel()
 
     def _check_cancelled(self) -> None:
         if self._cancel_event.is_set():
             raise SearchCancelled("Q3 search cancellation requested")
+        if self.budget_manager is not None:
+            try:
+                snapshot = self.budget_manager.check(
+                    states=len(self._value_cache) + len(self._inflight),
+                    profiles=self.stats.joint_profiles,
+                )
+            except BudgetExceeded as exc:
+                raise ResourceLimitExceeded(str(exc)) from exc
+            self.stats.peak_rss_bytes = max(
+                self.stats.peak_rss_bytes, snapshot.rss_bytes
+            )
 
     def __enter__(self) -> Self:
         return self
@@ -789,6 +813,7 @@ class ExactQ3Solver:
         )
 
     def _checkpoint_payload(self) -> dict[str, object]:
+        """Legacy in-memory payload retained only for v1 migration tests."""
         with self._cache_lock:
             return {
                 "version": CHECKPOINT_VERSION,
@@ -800,6 +825,90 @@ class ExactQ3Solver:
                 "stats": self.stats,
             }
 
+    def _config_digest(self) -> str:
+        payload = pickle.dumps(self.cfg, protocol=pickle.HIGHEST_PROTOCOL)
+        return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _remove_checkpoint_path(path: Path) -> None:
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+    def _write_v2_checkpoint(self, directory: Path) -> None:
+        directory.mkdir(parents=True, exist_ok=False)
+        by_day: dict[int, list[tuple[JointState, StateValue]]] = {}
+        with self._cache_lock:
+            for (day, state), value in self._value_cache.items():
+                by_day.setdefault(day, []).append((state, value))
+            metadata = {
+                "config": self.cfg,
+                "policy_cache": dict(self._policy_cache),
+                "stage_progress": dict(self._stage_progress),
+                "pruning_certificates": tuple(self.pruning_certificates),
+            }
+            stats = asdict(self.stats)
+
+        layers: list[dict[str, int | str]] = []
+        for day, rows in sorted(by_day.items()):
+            rows.sort(
+                key=lambda item: tuple(
+                    field
+                    for player in item[0]
+                    for field in (
+                        int(player.status),
+                        player.position,
+                        player.water,
+                        player.food,
+                        player.cash_scaled,
+                        player.fixed_payoff_scaled,
+                    )
+                )
+            )
+            states = np.asarray(
+                [
+                    [
+                        [
+                            int(player.status),
+                            player.position,
+                            player.water,
+                            player.food,
+                            player.cash_scaled,
+                            player.fixed_payoff_scaled,
+                        ]
+                        for player in state
+                    ]
+                    for state, _ in rows
+                ],
+                dtype=np.int64,
+            )
+            values = np.asarray([value.value for _, value in rows], dtype=np.float64)
+            success = np.asarray(
+                [value.success for _, value in rows], dtype=np.float64
+            )
+            filename = f"day-{day:03d}.npz"
+            np.savez(directory / filename, states=states, values=values, success=success)
+            layers.append({"day": day, "file": filename, "rows": len(rows)})
+
+        with (directory / "metadata.pkl").open("wb") as handle:
+            pickle.dump(metadata, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            handle.flush()
+            os.fsync(handle.fileno())
+        manifest = {
+            "version": CHECKPOINT_VERSION,
+            "config_digest": self._config_digest(),
+            "layers": layers,
+            "stats": stats,
+        }
+        manifest_path = directory / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+        with manifest_path.open("rb") as handle:
+            os.fsync(handle.fileno())
+
     def save_checkpoint(self, path: str | os.PathLike[str] | None = None) -> Path:
         target = Path(path) if path is not None else self.checkpoint_path
         if target is None:
@@ -808,46 +917,99 @@ class ExactQ3Solver:
         temporary = target.with_name(
             f".{target.name}.tmp-{os.getpid()}-{threading.get_ident()}"
         )
+        backup = target.with_name(
+            f".{target.name}.old-{os.getpid()}-{threading.get_ident()}"
+        )
         with self._checkpoint_lock:
             self._update_stats(checkpoint_writes=1)
-            payload = self._checkpoint_payload()
             try:
-                with temporary.open("wb") as handle:
-                    pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    handle.flush()
-                    os.fsync(handle.fileno())
+                self._remove_checkpoint_path(temporary)
+                self._remove_checkpoint_path(backup)
+                self._write_v2_checkpoint(temporary)
+                if target.exists():
+                    os.replace(target, backup)
                 os.replace(temporary, target)
+                self._remove_checkpoint_path(backup)
             finally:
-                if temporary.exists():
-                    temporary.unlink()
+                self._remove_checkpoint_path(temporary)
+                if backup.exists() and not target.exists():
+                    os.replace(backup, target)
+                elif backup.exists():
+                    self._remove_checkpoint_path(backup)
         return target
 
     def load_checkpoint(self, path: str | os.PathLike[str] | None = None) -> None:
         source = Path(path) if path is not None else self.checkpoint_path
         if source is None:
             raise ValueError("checkpoint path is not configured")
-        with source.open("rb") as handle:
-            payload = pickle.load(handle)
-        if (
-            not isinstance(payload, dict)
-            or payload.get("version") != CHECKPOINT_VERSION
-        ):
-            raise ValueError("unsupported Q3 checkpoint format")
-        if payload.get("config") != self.cfg:
-            raise ValueError("checkpoint configuration does not match this solver")
+        if source.is_file():
+            with source.open("rb") as handle:
+                payload = pickle.load(handle)
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != LEGACY_CHECKPOINT_VERSION
+            ):
+                raise ValueError("unsupported Q3 checkpoint format")
+            if payload.get("config") != self.cfg:
+                raise ValueError("checkpoint configuration does not match this solver")
+            value_cache = dict(payload["value_cache"])
+            policy_cache = dict(payload["policy_cache"])
+            stage_progress = dict(payload["stage_progress"])
+            certificates = list(payload.get("pruning_certificates", ()))
+            loaded_stats = payload["stats"]
+        else:
+            manifest = json.loads(
+                (source / "manifest.json").read_text(encoding="utf-8")
+            )
+            if manifest.get("version") != CHECKPOINT_VERSION:
+                raise ValueError("unsupported Q3 checkpoint format")
+            if manifest.get("config_digest") != self._config_digest():
+                raise ValueError("checkpoint configuration does not match this solver")
+            with (source / "metadata.pkl").open("rb") as handle:
+                metadata = pickle.load(handle)
+            if metadata.get("config") != self.cfg:
+                raise ValueError("checkpoint configuration does not match this solver")
+            value_cache: dict[tuple[int, JointState], StateValue] = {}
+            for layer in manifest.get("layers", []):
+                day = int(layer["day"])
+                with np.load(source / str(layer["file"]), allow_pickle=False) as data:
+                    states = data["states"]
+                    values = data["values"]
+                    success = data["success"]
+                for row in range(len(states)):
+                    players = tuple(
+                        PlayerState(
+                            Status(int(fields_[0])),
+                            position=int(fields_[1]),
+                            water=int(fields_[2]),
+                            food=int(fields_[3]),
+                            cash_scaled=int(fields_[4]),
+                            fixed_payoff_scaled=int(fields_[5]),
+                        )
+                        for fields_ in states[row]
+                    )
+                    value_cache[(day, players)] = StateValue(
+                        tuple(float(x) for x in values[row]),
+                        tuple(float(x) for x in success[row]),
+                    )
+            policy_cache = dict(metadata["policy_cache"])
+            stage_progress = dict(metadata["stage_progress"])
+            certificates = list(metadata.get("pruning_certificates", ()))
+            loaded_stats = manifest.get("stats", {})
         with self._cache_lock:
             if self._inflight:
                 raise RuntimeError(
                     "cannot load a checkpoint while states are being evaluated"
                 )
-            self._value_cache = dict(payload["value_cache"])
-            self._policy_cache = dict(payload["policy_cache"])
-            self._stage_progress = dict(payload["stage_progress"])
-            self.pruning_certificates = list(payload.get("pruning_certificates", ()))
-            loaded_stats = payload["stats"]
+            self._value_cache = value_cache
+            self._policy_cache = policy_cache
+            self._stage_progress = stage_progress
+            self.pruning_certificates = certificates
             normalized_stats = SolverStats()
             for field in fields(SolverStats):
-                if hasattr(loaded_stats, field.name):
+                if isinstance(loaded_stats, dict) and field.name in loaded_stats:
+                    setattr(normalized_stats, field.name, loaded_stats[field.name])
+                elif hasattr(loaded_stats, field.name):
                     setattr(
                         normalized_stats,
                         field.name,

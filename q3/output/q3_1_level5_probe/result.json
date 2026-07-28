@@ -1,0 +1,6 @@
+{
+  "status": "SEARCH_STOPPED",
+  "error": "Q3.1 initial best-response frontier exceeded its state limit",
+  "max_frontier_states": 100000,
+  "resume_command": "python -m q3.solve_q3_1 --max-rounds 1 --max-frontier-states 200000 --output q3/output/q3_1_level5_probe"
+}

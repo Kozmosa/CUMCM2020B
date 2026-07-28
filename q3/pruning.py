@@ -10,7 +10,8 @@ from fractions import Fraction
 import numpy as np
 
 from .data import Q3Config
-from .model import PlayerState, Status
+from .model import PlayerState, Status, terminal_payoff_scaled
+from .resource_index import ResourceIndex
 
 
 def shortest_distance_to_end(cfg: Q3Config) -> dict[int, int]:
@@ -207,6 +208,120 @@ class RelaxedSinglePlayerUpperBound:
             return player.fixed_payoff_scaled / self.cfg.money_scale
         cash = player.cash_scaled / self.cfg.money_scale
         return _add_up(cash, float(self.residual[day, player.position]))
+
+
+@dataclass
+class ResourceAwareSinglePlayerUpperBound:
+    """Lazy, upward-rounded relaxation indexed by ``(day, position, resource_id)``.
+
+    Away from villages it keeps the exact inventory, load, map, weather,
+    consumption, deadline, mining income, and terminal refund.  Congestion and
+    mine sharing are removed.  At villages future purchases and their cash
+    cost are relaxed completely; this is deliberately optimistic and avoids a
+    quadratic inventory closure while remaining a valid proof bound.
+    """
+
+    cfg: Q3Config
+    resources: ResourceIndex
+    fallback: RelaxedSinglePlayerUpperBound
+    _memo: dict[tuple[int, int, int], float]
+
+    @classmethod
+    def build(cls, cfg: Q3Config) -> "ResourceAwareSinglePlayerUpperBound":
+        return cls(
+            cfg=cfg,
+            resources=ResourceIndex.build(cfg),
+            fallback=RelaxedSinglePlayerUpperBound.build(cfg),
+            _memo={},
+        )
+
+    def _terminal_refund(self, water: int, food: int) -> float:
+        scaled = terminal_payoff_scaled(self.cfg, 0, water, food)
+        return math.nextafter(scaled / self.cfg.money_scale, math.inf)
+
+    def _weather_values(self, day: int) -> tuple[tuple[str, Fraction], ...]:
+        if self.cfg.weather_sequence is not None:
+            return ((self.cfg.weather_sequence[day], Fraction(1, 1)),)
+        return tuple(
+            (weather, Fraction(str(self.cfg.p_weather[weather])))
+            for weather in self.cfg.weather_order
+        )
+
+    def _residual(self, day: int, position: int, resource_id: int) -> float:
+        key = (day, position, resource_id)
+        cached = self._memo.get(key)
+        if cached is not None:
+            return cached
+        water, food = self.resources.decode(resource_id)
+        if position == self.cfg.end:
+            result = self._terminal_refund(water, food)
+        elif day >= self.cfg.deadline:
+            result = -float(self.cfg.failure_penalty)
+        elif position in self.cfg.villages:
+            # Free replenishment and free future village purchases strictly
+            # enlarge the feasible set.  The resource-free residual already
+            # includes the largest possible refund and solo mine income.
+            result = float(self.fallback.residual[day, position])
+        else:
+            branches: list[tuple[float, Fraction]] = []
+            for weather, probability in self._weather_values(day):
+                base_w = self.cfg.water_consume[weather]
+                base_f = self.cfg.food_consume[weather]
+                best = -float(self.cfg.failure_penalty)
+
+                def continuation(
+                    multiplier: int, destination: int, income: float = 0.0
+                ) -> float | None:
+                    next_w = water - multiplier * base_w
+                    next_f = food - multiplier * base_f
+                    if next_w < 0 or next_f < 0:
+                        return None
+                    if destination == self.cfg.end:
+                        future = self._terminal_refund(next_w, next_f)
+                    else:
+                        next_id = self.resources.encode(next_w, next_f)
+                        future = self._residual(day + 1, destination, next_id)
+                    return _add_up(income, future)
+
+                stayed = continuation(1, position)
+                if stayed is not None:
+                    best = max(best, stayed)
+                if position in self.cfg.mines:
+                    mined = continuation(3, position, float(self.cfg.mine_income))
+                    if mined is not None:
+                        best = max(best, mined)
+                if weather != "sandstorm":
+                    for destination in self.cfg.adj[position]:
+                        moved = continuation(2, destination)
+                        if moved is not None:
+                            best = max(best, moved)
+                branches.append((best, probability))
+
+            probability_sum = sum(
+                (probability for _, probability in branches), Fraction(0, 1)
+            )
+            if probability_sum == 1:
+                result = 0.0
+                for branch, probability in branches:
+                    result = _add_up(result, _mul_fraction_up(branch, probability))
+            else:
+                result = max(branch for branch, _ in branches)
+        self._memo[key] = result
+        return result
+
+    def value_by_id(
+        self, day: int, position: int, resource_id: int, cash_scaled: int
+    ) -> float:
+        if not 0 <= day <= self.cfg.deadline:
+            raise ValueError("upper-bound day is outside the horizon")
+        cash = cash_scaled / self.cfg.money_scale
+        return _add_up(cash, self._residual(day, position, resource_id))
+
+    def value(self, day: int, player: PlayerState) -> float:
+        if player.status is Status.FINISHED or player.status is Status.FAILED:
+            return player.fixed_payoff_scaled / self.cfg.money_scale
+        resource_id = self.resources.encode(player.water, player.food)
+        return self.value_by_id(day, player.position, resource_id, player.cash_scaled)
 
 
 @dataclass(frozen=True)

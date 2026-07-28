@@ -35,6 +35,7 @@ class Q3Config:
     nodes: tuple[int, ...]
     money_scale: int = 6
     failure_penalty: int = 1_000_000
+    weather_sequence: tuple[Weather, ...] | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.n_players <= 3:
@@ -53,6 +54,14 @@ class Q3Config:
                 raise ValueError(f"negative weather probability for {weather}")
             if weather not in self.water_consume or weather not in self.food_consume:
                 raise ValueError(f"missing consumption for weather {weather}")
+        if self.weather_sequence is not None:
+            if len(self.weather_sequence) != self.deadline:
+                raise ValueError(
+                    "known weather sequence length must equal the deadline"
+                )
+            for weather in self.weather_sequence:
+                if weather not in self.water_consume or weather not in self.food_consume:
+                    raise ValueError(f"unknown weather in sequence: {weather}")
 
     @property
     def init_cash_scaled(self) -> int:
@@ -93,6 +102,9 @@ def _from_q2(base: Q2LevelConfig, *, name: str) -> Q3Config:
         villages=base.villages,
         adj=dict(base.adj),
         nodes=base.nodes,
+        weather_sequence=(
+            tuple(base.weather[1:]) if name == "level5" else None
+        ),
     )
 
 
