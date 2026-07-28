@@ -27,6 +27,13 @@ def current_rss_bytes() -> int:
         return value * (1024 if os.name != "darwin" else 1)
 
 
+def peak_rss_bytes() -> int:
+    import resource
+
+    value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return value * (1024 if os.name != "darwin" else 1)
+
+
 @dataclass(frozen=True)
 class BudgetSnapshot:
     elapsed_seconds: float

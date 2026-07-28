@@ -9,7 +9,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from .data import level5, tiny_level6
-from .open_loop import EquilibriumOptions, Q31Limits, solve_q3_1
+from .open_loop import (
+    EquilibriumOptions,
+    Q31Limits,
+    _single_player_seed,
+    best_response_open_loop,
+    solve_q3_1,
+)
+from .runtime import peak_rss_bytes
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tiny", action="store_true", help="run a tiny known-weather smoke game")
     parser.add_argument("--max-rounds", type=int, default=20)
     parser.add_argument("--max-frontier-states", type=int, default=2_000_000)
+    parser.add_argument("--disable-compact-numba", action="store_true")
+    parser.add_argument(
+        "--benchmark-best-response",
+        action="store_true",
+        help="solve one player best response against the shared single-player seed",
+    )
     parser.add_argument("--output", type=Path, default=Path("q3/output/q3_1"))
     return parser
 
@@ -48,10 +61,52 @@ def main(argv: list[str] | None = None) -> int:
             cfg, weather_sequence=tuple("sunny" for _ in range(cfg.deadline))
         )
     args.output.mkdir(parents=True, exist_ok=True)
+    limits = Q31Limits(
+        max_frontier_states=args.max_frontier_states,
+        use_compact_numba=not args.disable_compact_numba,
+    )
+    if args.benchmark_best_response:
+        try:
+            seed = _single_player_seed(cfg, limits)
+            response = best_response_open_loop(
+                cfg,
+                0,
+                tuple(seed for _ in range(cfg.n_players)),
+                limits=limits,
+            )
+        except (RuntimeError, MemoryError) as exc:
+            stopped = {
+                "status": "SEARCH_STOPPED",
+                "error": str(exc),
+                "max_frontier_states": args.max_frontier_states,
+            }
+            (args.output / "best_response.json").write_text(
+                json.dumps(stopped, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(json.dumps(stopped, ensure_ascii=False, indent=2))
+            return 2
+        payload = {
+            "status": "BEST_RESPONSE_COMPLETE",
+            "backend": response.backend,
+            "payoff": response.payoff,
+            "current_payoff": response.current_payoff,
+            "gain": response.full_deviation_gain,
+            "states_examined": response.states_examined,
+            "frontier_sizes": response.frontier_sizes,
+            "day_seconds": response.day_seconds,
+            "peak_rss_bytes": peak_rss_bytes(),
+            "initial_purchase": response.strategy.initial_purchase.label(),
+            "actions": [action.label() for action in response.strategy.actions],
+        }
+        (args.output / "best_response.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
     try:
         result = solve_q3_1(
             cfg,
-            Q31Limits(max_frontier_states=args.max_frontier_states),
+            limits,
             EquilibriumOptions(
                 max_gauss_seidel_rounds=args.max_rounds,
                 max_double_oracle_rounds=args.max_rounds,
@@ -79,14 +134,46 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     with (args.output / "daily.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["day", "weather", "player", "action", "status", "position", "water", "food", "cash"])
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(
+            [
+                "day",
+                "weather",
+                "player",
+                "action",
+                "status",
+                "position",
+                "water",
+                "food",
+                "cash",
+                "fixed_payoff",
+            ]
+        )
         for record in result.replay.days:
             for player, (action, state) in enumerate(
                 zip(record.actions, record.state_after, strict=True), start=1
             ):
                 writer.writerow(
-                    [record.day, record.weather, player, action.label(), state.status.name, state.position, state.water, state.food, state.cash_scaled / cfg.money_scale]
+                    [
+                        record.day,
+                        record.weather,
+                        player,
+                        action.label(),
+                        state.status.name,
+                        state.position,
+                        state.water,
+                        state.food,
+                        (
+                            state.cash_scaled / cfg.money_scale
+                            if state.status.name == "ACTIVE"
+                            else ""
+                        ),
+                        (
+                            state.fixed_payoff_scaled / cfg.money_scale
+                            if state.status.name != "ACTIVE"
+                            else ""
+                        ),
+                    ]
                 )
     lines = [
         "# Q3.1 求解结果",
@@ -95,7 +182,31 @@ def main(argv: list[str] | None = None) -> int:
         f"- 支付：`{result.replay.payoff}`",
         f"- 最大 regret：`{max(result.regret):.6g}` 元",
         f"- 完整均衡选择：`{str(result.selection_complete).lower()}`",
+        "",
+        "| 玩家 | 初始购买（水/食物） | 到达日 | 支付/元 | regret/元 |",
+        "|---|---:|---:|---:|---:|",
     ]
+    for player, strategy in enumerate(result.strategies):
+        arrival = next(
+            (
+                record.day
+                for record in result.replay.days
+                if record.state_after[player].status.name == "FINISHED"
+            ),
+            "失败",
+        )
+        lines.append(
+            f"| {player + 1} | {strategy.initial_purchase.buy_water} / "
+            f"{strategy.initial_purchase.buy_food} | {arrival} | "
+            f"{result.replay.payoff[player]:g} | {result.regret[player]:g} |"
+        )
+    lines.extend(
+        [
+            "",
+            "`selection_complete=false` 表示没有枚举所有其他纯均衡；"
+            "该策略组合本身已经通过每名玩家的完整最佳反应认证。",
+        ]
+    )
     (args.output / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if result.status == "CERTIFIED_PURE" else 2

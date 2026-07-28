@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from itertools import permutations, product
+from time import perf_counter
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -83,6 +84,9 @@ class BestResponseResult:
     full_deviation_gain: float
     parent_pointers: tuple[Mapping[tuple[int, ...], tuple[tuple[int, ...] | None, Action]], ...]
     states_examined: int
+    frontier_sizes: tuple[int, ...] = ()
+    day_seconds: tuple[float, ...] = ()
+    backend: str = "scalar"
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,7 @@ class Q31Limits:
     max_frontier_states: int = 2_000_000
     max_initial_actions: int = 1_000_000
     max_restricted_profiles: int = 2_000_000
+    use_compact_numba: bool = True
 
 
 @dataclass(frozen=True)
@@ -284,7 +289,7 @@ def _terminal_player_payoff(cfg: Q3Config, player: PlayerState) -> int:
     return player.fixed_payoff_scaled
 
 
-def best_response_open_loop(
+def _best_response_open_loop_scalar(
     cfg: Q3Config,
     player: int,
     profile: Sequence[OpenLoopStrategy],
@@ -418,35 +423,261 @@ def best_response_open_loop(
     )
 
 
-def _single_player_seed(cfg: Q3Config, limits: Q31Limits) -> OpenLoopStrategy:
-    if cfg.name == "level5":
-        from q1.dp import solve
-        from q2.data import level3
+def _compact_kernel_eligible(
+    cfg: Q3Config, profile: Sequence[OpenLoopStrategy], limits: Q31Limits
+) -> bool:
+    if not limits.use_compact_numba or cfg.n_players != 3 or cfg.villages:
+        return False
+    if max(cfg.nodes) >= 16:
+        return False
+    return not any(
+        action.is_buyer
+        for strategy in profile
+        for action in strategy.actions
+    )
 
-        result = solve(level3(), verbose=False)
-        initial = result.trajectory[0]
-        initial_action = Action(
-            ActionKind.INITIAL_BUY,
-            buy_water=initial.bought_water,
-            buy_food=initial.bought_food,
+
+def _best_response_open_loop_compact(
+    cfg: Q3Config,
+    player: int,
+    profile: Sequence[OpenLoopStrategy],
+    *,
+    limits: Q31Limits,
+) -> BestResponseResult:
+    from .open_loop_numba import (
+        CompactKernelConfig,
+        NUMBA_OPEN_LOOP_AVAILABLE,
+        allocate_hash_table,
+        compact_hash_table,
+        decode_action_code,
+        expand_frontier_numba,
+        pack_frontier_state,
+    )
+
+    if not NUMBA_OPEN_LOOP_AVAILABLE:
+        return _best_response_open_loop_scalar(cfg, player, profile, limits=limits)
+    current_replay = replay_joint_strategy(cfg, profile)
+    weather = _known_weather(cfg)
+    kernel = CompactKernelConfig.build(cfg)
+    opponents = tuple(index for index in range(cfg.n_players) if index != player)
+    initial_probe = list(profile)
+    initial_probe[player] = OpenLoopStrategy(
+        Action(ActionKind.INITIAL_BUY),
+        tuple(INACTIVE_ACTION for _ in range(cfg.deadline)),
+    )
+    post_profile, errors = _initial_players(cfg, initial_probe)
+    if post_profile is None:
+        raise ValueError("opponent profile has an infeasible initial purchase: " + "; ".join(errors))
+    opponent0 = post_profile[opponents[0]]
+    opponent1 = post_profile[opponents[1]]
+    base_player = initial_joint_state(cfg)[player]
+    initial_actions = enumerate_initial_purchases_bounded(
+        cfg,
+        base_player,
+        max_actions=limits.max_initial_actions,
+        prune_strictly_dominated=True,
+    )
+    if len(initial_actions) > limits.max_frontier_states:
+        raise RuntimeError(
+            "Q3.1 initial compact frontier exceeded its state limit"
         )
-        actions: list[Action] = []
-        by_day = {record.day: record for record in result.trajectory if record.day > 0}
-        for day in range(1, cfg.deadline + 1):
-            record = by_day.get(day)
-            if record is None:
-                actions.append(INACTIVE_ACTION)
-            elif record.action == "stay":
-                actions.append(Action(ActionKind.STAY))
-            elif record.action == "mine":
-                actions.append(Action(ActionKind.MINE))
-            elif record.action.startswith("move:"):
-                actions.append(
-                    Action(ActionKind.MOVE, destination=int(record.action.split(":")[1]))
-                )
-            else:
-                raise ValueError(f"unsupported Q1 seed action {record.action}")
-        return OpenLoopStrategy(initial_action, tuple(actions))
+
+    current_low = np.empty(len(initial_actions), dtype=np.uint64)
+    current_high = np.empty(len(initial_actions), dtype=np.uint8)
+    current_cash = np.empty(len(initial_actions), dtype=np.int64)
+    initial_water = np.empty(len(initial_actions), dtype=np.int16)
+    initial_food = np.empty(len(initial_actions), dtype=np.int16)
+    for row, action in enumerate(initial_actions):
+        cash = base_player.cash_scaled - cfg.money_scale * (
+            cfg.water_price * action.buy_water + cfg.food_price * action.buy_food
+        )
+        deviator = PlayerState(
+            Status.ACTIVE,
+            position=cfg.start,
+            water=action.buy_water,
+            food=action.buy_food,
+            cash_scaled=cash,
+        )
+        low, high = pack_frontier_state(
+            kernel.resources, deviator, opponent0, opponent1
+        )
+        current_low[row] = low
+        current_high[row] = high
+        current_cash[row] = cash
+        initial_water[row] = action.buy_water
+        initial_food[row] = action.buy_food
+
+    parent_layers: list[np.ndarray | None] = [None]
+    action_layers: list[np.ndarray | None] = [None]
+    states_examined = len(current_low)
+    frontier_sizes = [len(current_low)]
+    day_seconds: list[float] = []
+    best_terminal: tuple[int, int, int, int, int] | None = None
+    # payoff, success, day, source row, compact action code
+    max_degree = max(len(cfg.adj[node]) for node in cfg.nodes)
+
+    for day, day_weather in enumerate(weather, start=1):
+        day_started = perf_counter()
+        opponent_kind = np.asarray(
+            [int(profile[index].actions[day - 1].kind) for index in opponents],
+            dtype=np.int8,
+        )
+        opponent_destination = np.asarray(
+            [profile[index].actions[day - 1].destination for index in opponents],
+            dtype=np.int8,
+        )
+        raw_upper = max(1, len(current_low) * (2 + max_degree))
+        day_limit = min(limits.max_frontier_states, raw_upper)
+        table = allocate_hash_table(day_limit)
+        (
+            count,
+            overflow,
+            payoff,
+            success,
+            source,
+            action_code,
+        ) = expand_frontier_numba(
+            current_low,
+            current_high,
+            current_cash,
+            opponent_kind,
+            opponent_destination,
+            day_weather == "sandstorm",
+            cfg.water_consume[day_weather],
+            cfg.food_consume[day_weather],
+            day == cfg.deadline,
+            cfg.end,
+            cfg.money_scale * cfg.mine_income,
+            cfg.failure_penalty_scaled,
+            cfg.money_scale,
+            cfg.water_price,
+            cfg.food_price,
+            kernel.resources.water,
+            kernel.resources.food,
+            kernel.resources.id_grid,
+            kernel.neighbors,
+            kernel.degree,
+            kernel.is_mine,
+            *table,
+            day_limit,
+        )
+        if int(payoff) > -(1 << 61):
+            candidate = (
+                int(payoff),
+                int(success),
+                day,
+                int(source),
+                int(action_code),
+            )
+            if best_terminal is None or candidate[:2] > best_terminal[:2]:
+                best_terminal = candidate
+        if overflow:
+            raise RuntimeError(
+                f"Q3.1 day {day} compact frontier exceeded "
+                f"{limits.max_frontier_states:,} states"
+            )
+        day_seconds.append(perf_counter() - day_started)
+        if day == cfg.deadline or count == 0:
+            break
+        (
+            next_low,
+            next_high,
+            next_cash,
+            next_parent,
+            next_action,
+        ) = compact_hash_table(table, int(count))
+        parent_layers.append(next_parent)
+        action_layers.append(next_action)
+        states_examined += len(next_low)
+        frontier_sizes.append(len(next_low))
+        current_low, current_high, current_cash = next_low, next_high, next_cash
+
+    if best_terminal is None:
+        raise RuntimeError("compact best-response search produced no terminal state")
+    payoff_scaled, _, terminal_day, current_index, terminal_code = best_terminal
+    reverse_actions: list[Action] = []
+
+    def decode(code: int) -> Action:
+        kind, destination = decode_action_code(code)
+        return Action(
+            kind,
+            destination=destination if kind is ActionKind.MOVE else 0,
+        )
+
+    reverse_actions.append(decode(terminal_code))
+    for day in range(terminal_day - 1, 0, -1):
+        parents = parent_layers[day]
+        actions = action_layers[day]
+        if parents is None or actions is None:
+            raise AssertionError("compact best-response parent layer is missing")
+        reverse_actions.append(decode(int(actions[current_index])))
+        current_index = int(parents[current_index])
+    initial_action = Action(
+        ActionKind.INITIAL_BUY,
+        buy_water=int(initial_water[current_index]),
+        buy_food=int(initial_food[current_index]),
+    )
+    reverse_actions.reverse()
+    reverse_actions.extend(
+        INACTIVE_ACTION for _ in range(cfg.deadline - len(reverse_actions))
+    )
+    strategy = OpenLoopStrategy(initial_action, tuple(reverse_actions))
+    verified = list(profile)
+    verified[player] = strategy
+    replay = replay_joint_strategy(cfg, verified)
+    if replay.payoff_scaled[player] != payoff_scaled:
+        raise AssertionError(
+            "compact best-response payoff disagrees with independent replay: "
+            f"{payoff_scaled} != {replay.payoff_scaled[player]}"
+        )
+    payoff_value = payoff_scaled / cfg.money_scale
+    current_payoff = current_replay.payoff[player]
+    return BestResponseResult(
+        player=player,
+        strategy=strategy,
+        payoff=payoff_value,
+        payoff_scaled=payoff_scaled,
+        current_payoff=current_payoff,
+        full_deviation_gain=payoff_value - current_payoff,
+        parent_pointers=tuple({} for _ in range(cfg.deadline + 1)),
+        states_examined=states_examined,
+        frontier_sizes=tuple(frontier_sizes),
+        day_seconds=tuple(day_seconds),
+        backend="compact-numba",
+    )
+
+
+def best_response_open_loop(
+    cfg: Q3Config,
+    player: int,
+    profile: Sequence[OpenLoopStrategy],
+    *,
+    limits: Q31Limits | None = None,
+) -> BestResponseResult:
+    limits = limits or Q31Limits()
+    if _compact_kernel_eligible(cfg, profile, limits):
+        return _best_response_open_loop_compact(
+            cfg, player, profile, limits=limits
+        )
+    return _best_response_open_loop_scalar(cfg, player, profile, limits=limits)
+
+
+def _single_player_seed(cfg: Q3Config, limits: Q31Limits) -> OpenLoopStrategy:
+    if cfg.n_players == 3 and not cfg.villages:
+        dummy = OpenLoopStrategy(
+            Action(ActionKind.INITIAL_BUY),
+            (Action(ActionKind.FAIL),)
+            + tuple(INACTIVE_ACTION for _ in range(cfg.deadline - 1)),
+        )
+        # Failed dummy opponents never interact.  The same exact compact BR
+        # oracle therefore produces a single-player seed without materializing
+        # Q1's large Python parent dictionaries.
+        return best_response_open_loop(
+            cfg,
+            0,
+            tuple(dummy for _ in range(cfg.n_players)),
+            limits=limits,
+        ).strategy
 
     solo = replace(cfg, n_players=1)
     dummy = OpenLoopStrategy(

@@ -1,0 +1,46 @@
+{
+  "status": "BEST_RESPONSE_COMPLETE",
+  "backend": "compact-numba",
+  "payoff": 9535.0,
+  "current_payoff": -990465.0,
+  "gain": 1000000.0,
+  "states_examined": 8752910,
+  "frontier_sizes": [
+    101018,
+    404068,
+    1143189,
+    1072495,
+    1143832,
+    1112504,
+    1076937,
+    985580,
+    898272,
+    815015
+  ],
+  "day_seconds": [
+    0.1415076106786728,
+    0.6720108315348625,
+    1.8121527284383774,
+    1.5974261313676834,
+    1.7694905921816826,
+    1.6151448860764503,
+    1.3426935896277428,
+    1.3821845799684525,
+    1.0829827040433884,
+    0.37107356637716293
+  ],
+  "peak_rss_bytes": 416530432,
+  "initial_purchase": "initial_buy+W27/F33",
+  "actions": [
+    "move:4",
+    "stay",
+    "move:6",
+    "move:13",
+    "inactive",
+    "inactive",
+    "inactive",
+    "inactive",
+    "inactive",
+    "inactive"
+  ]
+}

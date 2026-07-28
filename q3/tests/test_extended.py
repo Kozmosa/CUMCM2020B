@@ -5,6 +5,7 @@ import pickle
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from random import Random
 from tempfile import TemporaryDirectory
 
 import numpy as np
@@ -15,6 +16,7 @@ from q3.data import Q3Config, level5, level6, tiny_level6
 from q3.model import Action, ActionKind, PlayerState, Status
 from q3.open_loop import (
     OpenLoopStrategy,
+    Q31Limits,
     best_response_open_loop,
     replay_joint_strategy,
 )
@@ -164,6 +166,117 @@ class OpenLoopTests(unittest.TestCase):
         self.assertEqual(
             replay_joint_strategy(cfg, (response.strategy,)).payoff[0], best
         )
+
+    def test_compact_numba_best_response_matches_scalar(self) -> None:
+        cfg = replace(
+            tiny_level6(n_players=3, deadline=2),
+            villages=frozenset(),
+            weather_sequence=("sunny", "sunny"),
+        )
+        profiles = (
+            tuple(
+                OpenLoopStrategy(
+                    Action(ActionKind.INITIAL_BUY, buy_water=6, buy_food=6),
+                    (
+                        Action(ActionKind.MOVE, destination=2),
+                        Action(ActionKind.MOVE, destination=3),
+                    ),
+                )
+                for _ in range(3)
+            ),
+            (
+                OpenLoopStrategy(
+                    Action(ActionKind.INITIAL_BUY, buy_water=4, buy_food=4),
+                    (Action(ActionKind.STAY), Action(ActionKind.MOVE, destination=2)),
+                ),
+                OpenLoopStrategy(
+                    Action(ActionKind.INITIAL_BUY, buy_water=6, buy_food=6),
+                    (Action(ActionKind.MOVE, destination=2), Action(ActionKind.MINE)),
+                ),
+                OpenLoopStrategy(
+                    Action(ActionKind.INITIAL_BUY, buy_water=2, buy_food=2),
+                    (
+                        Action(ActionKind.MOVE, destination=2),
+                        Action(ActionKind.MOVE, destination=3),
+                    ),
+                ),
+            ),
+        )
+        for profile in profiles:
+            for player in range(3):
+                scalar = best_response_open_loop(
+                    cfg,
+                    player,
+                    profile,
+                    limits=Q31Limits(
+                        max_frontier_states=100_000,
+                        use_compact_numba=False,
+                    ),
+                )
+                compact = best_response_open_loop(
+                    cfg,
+                    player,
+                    profile,
+                    limits=Q31Limits(
+                        max_frontier_states=100_000,
+                        use_compact_numba=True,
+                    ),
+                )
+                self.assertEqual(compact.payoff_scaled, scalar.payoff_scaled)
+                trial = list(profile)
+                trial[player] = compact.strategy
+                self.assertEqual(
+                    replay_joint_strategy(cfg, trial).payoff_scaled[player],
+                    scalar.payoff_scaled,
+                )
+
+    def test_compact_numba_matches_scalar_on_random_profiles(self) -> None:
+        cfg = replace(
+            tiny_level6(n_players=3, deadline=2),
+            villages=frozenset(),
+            weather_sequence=("sunny", "sunny"),
+        )
+        random = Random(20260728)
+        day_actions = (
+            Action(ActionKind.FAIL),
+            Action(ActionKind.STAY),
+            Action(ActionKind.MINE),
+            Action(ActionKind.MOVE, destination=1),
+            Action(ActionKind.MOVE, destination=2),
+            Action(ActionKind.MOVE, destination=3),
+        )
+        purchases = tuple(
+            Action(ActionKind.INITIAL_BUY, buy_water=water, buy_food=food)
+            for water, food in ((0, 0), (2, 2), (4, 4), (6, 6), (8, 4))
+        )
+        for _ in range(12):
+            profile = tuple(
+                OpenLoopStrategy(
+                    random.choice(purchases),
+                    tuple(random.choice(day_actions) for _ in range(cfg.deadline)),
+                )
+                for _ in range(cfg.n_players)
+            )
+            player = random.randrange(cfg.n_players)
+            scalar = best_response_open_loop(
+                cfg,
+                player,
+                profile,
+                limits=Q31Limits(
+                    max_frontier_states=100_000,
+                    use_compact_numba=False,
+                ),
+            )
+            compact = best_response_open_loop(
+                cfg,
+                player,
+                profile,
+                limits=Q31Limits(
+                    max_frontier_states=100_000,
+                    use_compact_numba=True,
+                ),
+            )
+            self.assertEqual(compact.payoff_scaled, scalar.payoff_scaled)
 
 
 class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):

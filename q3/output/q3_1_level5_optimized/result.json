@@ -1,0 +1,71 @@
+{
+  "status": "CERTIFIED_PURE",
+  "regret": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "selection_complete": false,
+  "iterations": {
+    "gauss_seidel_rounds": 1,
+    "double_oracle_rounds": 0
+  },
+  "payoff": [
+    9535.0,
+    9480.0,
+    9510.0
+  ],
+  "success": [
+    true,
+    true,
+    true
+  ],
+  "strategies": [
+    {
+      "initial_purchase": "initial_buy+W27/F33",
+      "actions": [
+        "move:4",
+        "stay",
+        "move:6",
+        "move:13",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive"
+      ]
+    },
+    {
+      "initial_purchase": "initial_buy+W30/F37",
+      "actions": [
+        "stay",
+        "stay",
+        "move:5",
+        "move:6",
+        "move:13",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive"
+      ]
+    },
+    {
+      "initial_purchase": "initial_buy+W30/F34",
+      "actions": [
+        "move:5",
+        "move:6",
+        "move:13",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive",
+        "inactive"
+      ]
+    }
+  ],
+  "mixed_probabilities": []
+}

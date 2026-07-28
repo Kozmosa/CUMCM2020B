@@ -18,8 +18,9 @@ This directory now contains the shared exact rule core plus Q3.1 and Q3.2 solver
 - blockwise exact best-response and pure-Nash search for large stage games;
 - block-local canonical successor deduplication and configurable workers;
 - v2 directory checkpoints with per-day NumPy layers and v1 pickle migration;
-- explicit CPU/memory safety limits that stop instead of approximating.
+- explicit CPU/memory safety limits that stop instead of approximating;
 - known-weather open-loop replay and best responses that retain every opponent's full state;
+- a compact 67-bit/Numba Q3.1 frontier that removes opponent cash only when the map has no villages;
 - adaptive restricted games with full unilateral-deviation scans and explicit regret bounds;
 - finite-support mixed fallback through deterministic NashConv minimization.
 
@@ -51,6 +52,10 @@ Run the Q3.1 smoke solve or the official fifth level:
 uv run python -m q3.solve_q3_1 --tiny --output q3/output/q3_1_smoke
 uv run python -m q3.solve_q3_1 --output q3/output/q3_1_level5
 ```
+
+The official fifth level now returns a certified pure profile with zero full
+unilateral regret.  Use `--benchmark-best-response` to profile one exact
+oracle call, or `--disable-compact-numba` to retain the scalar reference.
 
 Run the baseline plus the four non-duplicate one-factor sensitivity points:
 
