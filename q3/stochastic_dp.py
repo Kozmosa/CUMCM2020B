@@ -26,6 +26,7 @@ from .canonical import actions_to_original, canonicalize_state, value_to_origina
 from .data import Q3Config, Weather
 from .model import (
     Action,
+    ActionKind,
     JointState,
     PlayerState,
     StateValue,
@@ -55,7 +56,14 @@ from .stage_game import (
     select_pure_equilibrium,
     select_pure_equilibrium_candidates,
 )
-from .transition import apply_initial_purchases, apply_joint_transition_batch
+from .storage import PackedStateCodec
+from .transition import (
+    BatchTransitionArrays,
+    apply_initial_purchases,
+    apply_joint_profile_arrays,
+    apply_joint_transition_batch,
+    materialize_transition_successors,
+)
 
 CHECKPOINT_VERSION = 2
 LEGACY_CHECKPOINT_VERSION = 1
@@ -94,6 +102,8 @@ class SolverLimits:
 @dataclass
 class SolverStats:
     states_solved: int = 0
+    terminal_evaluations: int = 0
+    cached_states: int = 0
     cache_hits: int = 0
     cache_waits: int = 0
     stage_games: int = 0
@@ -105,6 +115,10 @@ class SolverStats:
     joint_profiles: int = 0
     structured_profiles_pruned: int = 0
     upper_bound_profiles: int = 0
+    upper_bound_cache_entries: int = 0
+    upper_bound_cache_bytes: int = 0
+    upper_bound_build_seconds: float = 0.0
+    upper_bound_threads: int = 0
     best_response_profiles_pruned: int = 0
     pruning_certificates_recorded: int = 0
     invalid_profiles: int = 0
@@ -142,6 +156,7 @@ class ExactQ3Solver:
         limits: SolverLimits | None = None,
         equilibrium_atol: float = 1e-10,
         workers: int = 1,
+        bound_threads: int | None = None,
         checkpoint_path: str | os.PathLike[str] | None = None,
         checkpoint_every_states: int = 0,
         checkpoint_every_pairs: int = 0,
@@ -172,14 +187,19 @@ class ExactQ3Solver:
         self.max_pruning_certificates = max_pruning_certificates
         self.budget_manager = budget_manager
         self.pruning_certificates: list[BestResponsePruningCertificate] = []
-        self._upper_bound = ResourceAwareSinglePlayerUpperBound.build(cfg)
+        self._upper_bound = ResourceAwareSinglePlayerUpperBound.build(
+            cfg, threads=bound_threads
+        )
+        self._state_codec = PackedStateCodec(
+            self._upper_bound.resources, cfg.n_players
+        )
         self.stats = SolverStats()
-        self._value_cache: dict[tuple[int, JointState], StateValue] = {}
+        self._value_cache: dict[bytes, StateValue] = {}
         self._policy_cache: dict[
-            tuple[int, JointState, Weather], tuple[Action, ...]
+            tuple[bytes, Weather], tuple[Action, ...]
         ] = {}
         self._stage_progress: dict[object, ChunkedSearchProgress] = {}
-        self._inflight: dict[tuple[int, JointState], _InFlight] = {}
+        self._inflight: dict[bytes, _InFlight] = {}
         self._cache_lock = threading.RLock()
         self._checkpoint_lock = threading.Lock()
         self._cancel_event = threading.Event()
@@ -252,6 +272,38 @@ class ExactQ3Solver:
                 self.stats.max_joint_profiles_seen, profiles
             )
 
+    def _sync_upper_bound_stats(self) -> None:
+        with self._cache_lock:
+            self.stats.upper_bound_cache_entries = self._upper_bound.cache_entries
+            self.stats.upper_bound_cache_bytes = self._upper_bound.cache_bytes
+            self.stats.upper_bound_build_seconds = self._upper_bound.build_seconds
+            self.stats.upper_bound_threads = self._upper_bound.build_threads
+
+    def _state_key(self, day: int, state: JointState) -> bytes:
+        return self._state_codec.encode(day, state)
+
+    def _normalize_policy_mapping(self, mapping: dict) -> dict:
+        normalized = {}
+        interned_state_keys: dict[bytes, bytes] = {}
+        for raw_key, value in mapping.items():
+            if (
+                isinstance(raw_key, tuple)
+                and len(raw_key) == 2
+                and isinstance(raw_key[0], (bytes, bytearray))
+            ):
+                raw_state_key, weather = raw_key
+                state_key = bytes(raw_state_key)
+                state_key = interned_state_keys.setdefault(state_key, state_key)
+                normalized[(state_key, weather)] = value
+                continue
+            day, state, weather = raw_key
+            if day == self.cfg.deadline or all_absorbed(state):
+                continue
+            state_key = self._state_key(day, state)
+            state_key = interned_state_keys.setdefault(state_key, state_key)
+            normalized[(state_key, weather)] = value
+        return normalized
+
     def _check_action_budget(
         self, action_sets: Sequence[Sequence[Action]]
     ) -> tuple[int, ...]:
@@ -274,7 +326,15 @@ class ExactQ3Solver:
 
     def _solve_canonical(self, day: int, state: JointState) -> StateValue:
         self._check_cancelled()
-        key = (day, state)
+        if day == self.cfg.deadline or all_absorbed(state):
+            # Terminal leaves have no continuation policy and are cheaper to
+            # recompute than to retain as Python dict/dataclass entries.  In
+            # level 6 these leaves dominate the cache, especially at the
+            # deadline.  Batch-local successor deduplication still guarantees
+            # that a repeated leaf is evaluated only once per profile batch.
+            self._update_stats(states_solved=1, terminal_evaluations=1)
+            return terminal_state_value(self.cfg, state)
+        key = self._state_key(day, state)
         ident = threading.get_ident()
         while True:
             with self._cache_lock:
@@ -315,6 +375,7 @@ class ExactQ3Solver:
         with self._cache_lock:
             self._value_cache[key] = result
             self.stats.states_solved += 1
+            self.stats.cached_states = len(self._value_cache)
             self._inflight.pop(key, None)
             marker.event.set()
             states_solved = self.stats.states_solved
@@ -327,13 +388,14 @@ class ExactQ3Solver:
 
         expected_value = np.zeros(self.cfg.n_players, dtype=np.float64)
         expected_success = np.zeros(self.cfg.n_players, dtype=np.float64)
+        state_key = self._state_key(day, state)
         for weather in self.cfg.weather_order:
             probability = float(self.cfg.p_weather[weather])
             equilibrium = self._solve_stage(day, state, weather)
             expected_value += probability * np.asarray(equilibrium.value)
             expected_success += probability * np.asarray(equilibrium.success)
             with self._cache_lock:
-                self._policy_cache[(day, state, weather)] = equilibrium.actions
+                self._policy_cache[(state_key, weather)] = equilibrium.actions
         return StateValue(tuple(expected_value), tuple(expected_success))
 
     def _solve_unique_successors(
@@ -385,6 +447,134 @@ class ExactQ3Solver:
         )
         return ProfileBatchEvaluation(valid.copy(), payoff, success)
 
+    def _evaluate_transition_arrays(
+        self,
+        continuation_day: int,
+        state: JointState,
+        batch: BatchTransitionArrays,
+        rows: np.ndarray | None = None,
+    ) -> ProfileBatchEvaluation:
+        selected = batch.valid if rows is None else batch.valid & rows
+        if continuation_day != self.cfg.deadline:
+            successors = materialize_transition_successors(
+                self.cfg, state, batch, selected
+            )
+            return self._evaluate_successors(
+                continuation_day, selected, successors
+            )
+
+        # Deadline leaves are analytic.  Evaluate their fixed payoffs directly
+        # from the structure-of-arrays transition result, avoiding thousands
+        # of PlayerState objects, canonical sorts, hashes, and cache probes.
+        payoff = np.full(
+            (len(batch.valid), self.cfg.n_players), -np.inf, dtype=np.float64
+        )
+        success = np.zeros(
+            (len(batch.valid), self.cfg.n_players), dtype=np.float64
+        )
+        with self._cache_lock:
+            track_terminal_duplicates = self.stats.duplicate_successors == 0
+        signature = (
+            np.zeros((len(batch.valid), self.cfg.n_players, 6), dtype=np.int64)
+            if track_terminal_duplicates
+            else None
+        )
+        for player_index, original in enumerate(state):
+            if original.status is not Status.ACTIVE:
+                payoff[selected, player_index] = (
+                    original.fixed_payoff_scaled / self.cfg.money_scale
+                )
+                if signature is not None:
+                    signature[selected, player_index] = (
+                        int(original.status),
+                        original.position,
+                        original.water,
+                        original.food,
+                        original.cash_scaled,
+                        original.fixed_payoff_scaled,
+                    )
+                if original.status is Status.FINISHED:
+                    success[selected, player_index] = 1.0
+                continue
+
+            failed = selected & (
+                batch.kind[:, player_index] == int(ActionKind.FAIL)
+            )
+            payoff[failed, player_index] = (
+                original.cash_scaled - self.cfg.failure_penalty_scaled
+            ) / self.cfg.money_scale
+            if signature is not None:
+                signature[failed, player_index, 0] = int(Status.FAILED)
+                signature[failed, player_index, 5] = (
+                    original.cash_scaled - self.cfg.failure_penalty_scaled
+                )
+
+            finished = (
+                selected
+                & ~failed
+                & (batch.position[:, player_index] == self.cfg.end)
+            )
+            if np.any(finished):
+                water = batch.water[finished, player_index].astype(np.int64)
+                food = batch.food[finished, player_index].astype(np.int64)
+                refund_scaled = (
+                    self.cfg.money_scale
+                    * (self.cfg.water_price * water + self.cfg.food_price * food)
+                ) // 2
+                payoff[finished, player_index] = (
+                    batch.cash_scaled[finished, player_index] + refund_scaled
+                ) / self.cfg.money_scale
+                success[finished, player_index] = 1.0
+                if signature is not None:
+                    signature[finished, player_index, 0] = int(Status.FINISHED)
+                    signature[finished, player_index, 5] = (
+                        batch.cash_scaled[finished, player_index] + refund_scaled
+                    )
+
+            deadline_failure = selected & ~failed & ~finished
+            payoff[deadline_failure, player_index] = (
+                batch.cash_scaled[deadline_failure, player_index]
+                - self.cfg.failure_penalty_scaled
+            ) / self.cfg.money_scale
+            if signature is not None:
+                signature[deadline_failure, player_index, 0] = int(Status.ACTIVE)
+                signature[deadline_failure, player_index, 1] = batch.position[
+                    deadline_failure, player_index
+                ]
+                signature[deadline_failure, player_index, 2] = batch.water[
+                    deadline_failure, player_index
+                ]
+                signature[deadline_failure, player_index, 3] = batch.food[
+                    deadline_failure, player_index
+                ]
+                signature[deadline_failure, player_index, 4] = batch.cash_scaled[
+                    deadline_failure, player_index
+                ]
+
+        terminal_count = int(np.sum(selected))
+        if terminal_count and signature is not None:
+            terminal_signature = signature[selected]
+            order = np.lexsort(
+                tuple(
+                    terminal_signature[:, :, field]
+                    for field in range(5, -1, -1)
+                ),
+                axis=1,
+            )
+            canonical_signature = np.take_along_axis(
+                terminal_signature, order[:, :, None], axis=1
+            ).reshape((terminal_count, -1))
+            unique_count = len(np.unique(canonical_signature, axis=0))
+        else:
+            unique_count = terminal_count
+        self._update_stats(
+            states_solved=terminal_count,
+            terminal_evaluations=terminal_count,
+            unique_successors=unique_count,
+            duplicate_successors=terminal_count - unique_count,
+        )
+        return ProfileBatchEvaluation(selected.copy(), payoff, success)
+
     def _evaluate_day_profiles(
         self,
         day: int,
@@ -392,13 +582,13 @@ class ExactQ3Solver:
         weather: Weather,
         profiles: Sequence[Sequence[Action]],
     ) -> ProfileBatchEvaluation:
-        batch = apply_joint_transition_batch(self.cfg, state, profiles, weather)
+        batch = apply_joint_profile_arrays(self.cfg, state, profiles, weather)
         self._update_stats(
             joint_profiles=len(profiles),
             invalid_profiles=int((~batch.valid).sum()),
             transition_batches=1,
         )
-        return self._evaluate_successors(day + 1, batch.valid, batch.successors)
+        return self._evaluate_transition_arrays(day + 1, state, batch)
 
     def _upper_bounds_from_successors(
         self,
@@ -416,6 +606,7 @@ class ExactQ3Solver:
                 continuation_day, successor[player]
             )
         self._update_stats(upper_bound_profiles=len(successors))
+        self._sync_upper_bound_stats()
         return bounds
 
     def _day_profile_upper_bounds(
@@ -664,10 +855,11 @@ class ExactQ3Solver:
         self, day: int, state: JointState, weather: Weather
     ) -> tuple[Action, ...]:
         canonical, canonical_to_original = canonicalize_state(state)
-        if (day, canonical) not in self._value_cache:
+        state_key = self._state_key(day, canonical)
+        if state_key not in self._value_cache:
             self.solve_state(day, state)
         with self._cache_lock:
-            actions = self._policy_cache[(day, canonical, weather)]
+            actions = self._policy_cache[(state_key, weather)]
         return actions_to_original(actions, canonical_to_original)
 
     def _evaluate_initial_indices(
@@ -840,7 +1032,8 @@ class ExactQ3Solver:
         directory.mkdir(parents=True, exist_ok=False)
         by_day: dict[int, list[tuple[JointState, StateValue]]] = {}
         with self._cache_lock:
-            for (day, state), value in self._value_cache.items():
+            for state_key, value in self._value_cache.items():
+                day, state = self._state_codec.decode(state_key)
                 by_day.setdefault(day, []).append((state, value))
             metadata = {
                 "config": self.cfg,
@@ -952,8 +1145,18 @@ class ExactQ3Solver:
                 raise ValueError("unsupported Q3 checkpoint format")
             if payload.get("config") != self.cfg:
                 raise ValueError("checkpoint configuration does not match this solver")
-            value_cache = dict(payload["value_cache"])
-            policy_cache = dict(payload["policy_cache"])
+            value_cache: dict[bytes, StateValue] = {}
+            for raw_key, value in payload["value_cache"].items():
+                if isinstance(raw_key, (bytes, bytearray)):
+                    day, state = self._state_codec.decode(bytes(raw_key))
+                else:
+                    day, state = raw_key
+                if day == self.cfg.deadline or all_absorbed(state):
+                    continue
+                value_cache[self._state_key(day, state)] = value
+            policy_cache = self._normalize_policy_mapping(
+                dict(payload["policy_cache"])
+            )
             stage_progress = dict(payload["stage_progress"])
             certificates = list(payload.get("pruning_certificates", ()))
             loaded_stats = payload["stats"]
@@ -969,9 +1172,14 @@ class ExactQ3Solver:
                 metadata = pickle.load(handle)
             if metadata.get("config") != self.cfg:
                 raise ValueError("checkpoint configuration does not match this solver")
-            value_cache: dict[tuple[int, JointState], StateValue] = {}
+            value_cache: dict[bytes, StateValue] = {}
             for layer in manifest.get("layers", []):
                 day = int(layer["day"])
+                # Older v2 checkpoints may contain a very large deadline
+                # layer.  It is fully analytic, so avoid even materializing
+                # those PlayerState objects while migrating the checkpoint.
+                if day == self.cfg.deadline:
+                    continue
                 with np.load(source / str(layer["file"]), allow_pickle=False) as data:
                     states = data["states"]
                     values = data["values"]
@@ -988,11 +1196,15 @@ class ExactQ3Solver:
                         )
                         for fields_ in states[row]
                     )
-                    value_cache[(day, players)] = StateValue(
+                    if all_absorbed(players):
+                        continue
+                    value_cache[self._state_key(day, players)] = StateValue(
                         tuple(float(x) for x in values[row]),
                         tuple(float(x) for x in success[row]),
                     )
-            policy_cache = dict(metadata["policy_cache"])
+            policy_cache = self._normalize_policy_mapping(
+                dict(metadata["policy_cache"])
+            )
             stage_progress = dict(metadata["stage_progress"])
             certificates = list(metadata.get("pruning_certificates", ()))
             loaded_stats = manifest.get("stats", {})
@@ -1016,6 +1228,7 @@ class ExactQ3Solver:
                         getattr(loaded_stats, field.name),
                     )
             self.stats = normalized_stats
+            self.stats.cached_states = len(self._value_cache)
             self.stats.pruning_certificates_recorded = len(self.pruning_certificates)
             self.stats.checkpoint_loads += 1
             self._last_checkpoint_states = self.stats.states_solved

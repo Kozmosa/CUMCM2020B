@@ -55,10 +55,8 @@ from .stochastic_dp import (
 from .transition import (
     BatchTransitionArrays,
     apply_initial_purchases,
-    apply_joint_transition_batch,
     apply_unilateral_transition_arrays,
     apply_unilateral_transition_encoded_arrays,
-    materialize_transition_successors,
 )
 
 
@@ -264,7 +262,7 @@ class AdaptiveQ3Solver(ExactQ3Solver):
         self.quality_target = quality_target
         self.adaptive_stats = AdaptiveStats()
         self._policy_entry_cache: dict[
-            tuple[int, JointState, Weather], tuple[PolicyEntry, ...]
+            tuple[bytes, Weather], tuple[PolicyEntry, ...]
         ] = {}
 
     def clear(self) -> None:
@@ -297,7 +295,9 @@ class AdaptiveQ3Solver(ExactQ3Solver):
             self.adaptive_stats = payload["stats"]
             self._policy_entry_cache = {
                 key: entries
-                for key, entries in payload.get("policy_entry_cache", {}).items()
+                for key, entries in self._normalize_policy_mapping(
+                    dict(payload.get("policy_entry_cache", {}))
+                ).items()
                 if any(entry.action is None for entry in entries)
             }
 
@@ -306,15 +306,16 @@ class AdaptiveQ3Solver(ExactQ3Solver):
             return terminal_state_value(self.cfg, state)
         expected_value = np.zeros(self.cfg.n_players, dtype=np.float64)
         expected_success = np.zeros(self.cfg.n_players, dtype=np.float64)
+        state_key = self._state_key(day, state)
         for weather in self.cfg.weather_order:
             probability = float(self.cfg.p_weather[weather])
             outcome = self._solve_adaptive_stage(day, state, weather)
             expected_value += probability * np.asarray(outcome.value)
             expected_success += probability * np.asarray(outcome.success)
             with self._cache_lock:
-                key = (day, state, weather)
+                key = (state_key, weather)
                 if outcome.actions is not None:
-                    self._policy_cache[(day, state, weather)] = outcome.actions
+                    self._policy_cache[key] = outcome.actions
                 else:
                     self._policy_entry_cache[key] = outcome.policy
         return StateValue(tuple(expected_value), tuple(expected_success))
@@ -323,9 +324,10 @@ class AdaptiveQ3Solver(ExactQ3Solver):
         self, day: int, state: JointState, weather: Weather
     ) -> tuple[PolicyEntry, ...]:
         canonical, canonical_to_original = canonicalize_state(state)
-        if (day, canonical) not in self._value_cache:
+        state_key = self._state_key(day, canonical)
+        if state_key not in self._value_cache:
             self.solve_state(day, state)
-        key = (day, canonical, weather)
+        key = (state_key, weather)
         with self._cache_lock:
             entries = self._policy_entry_cache.get(key)
             if entries is None:
@@ -806,11 +808,8 @@ class AdaptiveQ3Solver(ExactQ3Solver):
                 self.adaptive_stats.deviation_actions_pruned += int(
                     np.sum(pruned)
                 )
-                successors = materialize_transition_successors(
-                    self.cfg, state, batch, keep
-                )
-                evaluation = self._evaluate_successors(
-                    day + 1, keep, successors
+                evaluation = self._evaluate_transition_arrays(
+                    day + 1, state, batch, keep
                 )
                 self.adaptive_stats.deviation_actions_evaluated += int(np.sum(keep))
                 for row in np.flatnonzero(keep):
@@ -904,29 +903,17 @@ class AdaptiveQ3Solver(ExactQ3Solver):
                     resource_ids = self._upper_bound.resources.id_grid[
                         continuing_water, continuing_food
                     ]
-                    codes = (
-                        continuing_position.astype(np.int64) * len(self._upper_bound.resources.water)
-                        + resource_ids.astype(np.int64)
+                    residual = self._upper_bound.residuals_by_id(
+                        continuation_day,
+                        continuing_position,
+                        resource_ids,
                     )
-                    unique_codes, inverse = np.unique(codes, return_inverse=True)
-                    unique_residual = np.fromiter(
-                        (
-                            self._upper_bound._residual(
-                                continuation_day,
-                                int(code // len(self._upper_bound.resources.water)),
-                                int(code % len(self._upper_bound.resources.water)),
-                            )
-                            for code in unique_codes
-                        ),
-                        dtype=np.float64,
-                        count=len(unique_codes),
-                    )
-                    residual = unique_residual[inverse]
                 cash_value = continuing_cash / self.cfg.money_scale
                 bounds[continuing_rows] = np.nextafter(
                     cash_value + residual, np.inf
                 )
         self._update_stats(upper_bound_profiles=len(batch.valid))
+        self._sync_upper_bound_stats()
         return bounds
 
     def _mixed_stage_outcome(
@@ -1338,6 +1325,7 @@ def solve_q3_2(
     checkpoint: str | None = None,
     resume: bool = False,
     workers: int = 1,
+    bound_threads: int | None = None,
     checkpoint_every_states: int = 0,
     checkpoint_every_pairs: int = 0,
     enable_bound_pruning: bool = True,
@@ -1351,6 +1339,7 @@ def solve_q3_2(
     kwargs = dict(
         limits=limits,
         workers=workers,
+        bound_threads=bound_threads,
         checkpoint_path=checkpoint,
         checkpoint_every_states=checkpoint_every_states,
         checkpoint_every_pairs=checkpoint_every_pairs,

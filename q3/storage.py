@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -51,6 +52,83 @@ class CompactStateCodec:
                 )
             )
         return tuple(players)
+
+
+@dataclass(frozen=True)
+class PackedStateCodec:
+    """Fixed-width byte keys for hot value and policy dictionaries.
+
+    A three-player level-6 key occupies 68 bytes including the day, versus a
+    nested tuple of PlayerState objects and their individual Python integers.
+    The representation is lossless for the supported Q3 map and resource
+    index and remains directly decodable for checkpoint serialization.
+    """
+
+    resources: ResourceIndex
+    n_players: int
+
+    _DAY = struct.Struct("<H")
+    _PLAYER = struct.Struct("<BBIqq")
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.n_players <= 3:
+            raise ValueError("packed Q3 state keys support one to three players")
+        if len(self.resources.water) >= 1 << 32:
+            raise ValueError("resource ids do not fit the packed Q3 key")
+
+    @property
+    def key_size(self) -> int:
+        return self._DAY.size + self.n_players * self._PLAYER.size
+
+    def encode(self, day: int, state: JointState) -> bytes:
+        if not 0 <= day < 1 << 16:
+            raise ValueError("day does not fit the packed Q3 key")
+        if len(state) != self.n_players:
+            raise ValueError("joint state has the wrong player count")
+        output = bytearray(self.key_size)
+        self._DAY.pack_into(output, 0, day)
+        offset = self._DAY.size
+        for player in state:
+            if not 0 <= player.position < 1 << 8:
+                raise ValueError("position does not fit the packed Q3 key")
+            resource_id = self.resources.encode(player.water, player.food)
+            if resource_id < 0:
+                raise ValueError("state inventory is outside the resource index")
+            self._PLAYER.pack_into(
+                output,
+                offset,
+                int(player.status),
+                player.position,
+                resource_id,
+                player.cash_scaled,
+                player.fixed_payoff_scaled,
+            )
+            offset += self._PLAYER.size
+        return bytes(output)
+
+    def decode(self, key: bytes) -> tuple[int, JointState]:
+        if len(key) != self.key_size:
+            raise ValueError("packed state key has the wrong width")
+        day = int(self._DAY.unpack_from(key, 0)[0])
+        players: list[PlayerState] = []
+        offset = self._DAY.size
+        for _ in range(self.n_players):
+            status, position, resource_id, cash, payoff = self._PLAYER.unpack_from(
+                key, offset
+            )
+            water, food = self.resources.decode(int(resource_id))
+            players.append(
+                PlayerState(
+                    Status(int(status)),
+                    position=int(position),
+                    water=water,
+                    food=food,
+                    cash_scaled=int(cash),
+                    fixed_payoff_scaled=int(payoff),
+                )
+            )
+            offset += self._PLAYER.size
+        return day, tuple(players)
 
 
 @dataclass

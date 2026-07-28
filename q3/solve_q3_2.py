@@ -102,6 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="successor workers (default: 16 without the GIL, otherwise 1)",
     )
+    parser.add_argument(
+        "--bound-threads",
+        type=int,
+        default=None,
+        help="native threads for the resource-bound DP (default: up to 64)",
+    )
     parser.add_argument("--checkpoint", type=str)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint-every-states", type=int, default=1_000_000)
@@ -137,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         workers = _resolve_workers(args.workers)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.bound_threads is not None and args.bound_threads <= 0:
+        parser.error("--bound-threads must be positive")
     if args.resume and not args.checkpoint:
         parser.error("--resume requires --checkpoint")
     if not 0.0 <= args.p_storm < 1.0:
@@ -202,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             checkpoint=args.checkpoint,
             resume=args.resume,
             workers=workers,
+            bound_threads=args.bound_threads,
             checkpoint_every_states=args.checkpoint_every_states,
             checkpoint_every_pairs=args.checkpoint_every_pairs,
             enable_bound_pruning=not args.disable_bound_pruning,
@@ -248,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     kwargs = dict(
         limits=limits,
         workers=workers,
+        bound_threads=args.bound_threads,
         checkpoint_path=args.checkpoint,
         checkpoint_every_states=args.checkpoint_every_states,
         checkpoint_every_pairs=args.checkpoint_every_pairs,

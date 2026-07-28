@@ -299,13 +299,13 @@ resource_id -> (water, food)
 价值缓存键为
 
 ```text
-(day, canonical_joint_state)
+packed(day, canonical_joint_state)  # 三人时固定 68 bytes
 ```
 
 天气在日初观察后进入阶段博弈，因此阶段策略缓存键为
 
 ```text
-(day, canonical_joint_state, weather)
+(packed_state_key, weather)
 ```
 
 不同历史到达相同精确联合状态时，共享同一价值和均衡行动。
@@ -322,7 +322,7 @@ cash_scaled   int64
 fixed_payoff_scaled  int64
 ```
 
-三人状态使用结构化数组或多个整数字段作为哈希键。不要依赖包含 Python 对象的嵌套元组作为热路径存储格式。
+三人状态使用固定宽度 bytes 作为哈希键：日期为 `uint16`，每名玩家为上述 22-byte 记录，总计 68 bytes。检查点写入时可以无损解码回逐日 NumPy 层；热路径不再保留嵌套 `PlayerState` 元组作为字典键。
 
 ---
 
@@ -814,6 +814,8 @@ replay_profile_batch
 
 哈希表、递归调度和磁盘缓存留在 Python 层；大规模整数循环和数组运算放入 Numba。
 
+当前资源感知上界已经按日期层实现 `@njit(parallel=True)`。普通 CPython 仍使用一个 Python successor worker，但 `--bound-threads` 可以独立使用最多 64 个原生线程；第六关完整上界后缀最多约 636 MiB，并只按实际请求的最早日期向前扩展。
+
 ### 11.3 避免并行写竞争
 
 多个线程不得直接向同一缓存或同一 `max` 数组无保护写入。采用：
@@ -904,14 +906,12 @@ solve_state(t, state):
     absorb finished and failed players
 
     if t == T or all players absorbed:
-        result = terminal_value(state)
-        cache and return result
+        return terminal_value(state)  # analytic leaf; do not cache
 
     state = absorb_deterministically_doomed_players(state)
 
     if all players absorbed:
-        result = terminal_value(state)
-        cache and return result
+        return terminal_value(state)
 
     expected_value = [0, 0, 0]
     expected_success = [0, 0, 0]
@@ -1144,4 +1144,4 @@ Q3.1 和 Q3.2 可以共享状态、联合回放、交互统计、定点金额和
 - v2 目录检查点（manifest、逐日 NumPy 层、阶段元数据）以及 v1 pickle 迁移读取；
 - 墙钟/RSS/状态/profile 预算和原子检查点。
 
-小规模穷举与回归测试已覆盖标量/批量/紧凑数组转移、偏离导致对手提前失败、上界支配、exact/adaptive 一致性、无纯均衡混合解以及 v1/v2 恢复。普通 CPython 3.13 单线程五分钟根状态基准完成 101,534 个状态和 6.815 亿次全动作偏离扫描，峰值 RSS 约 729 MiB，检查点约 21 MiB。完整第六关仍应按 24 小时、256 GiB 的正式命令运行；预算耗尽时输出 `SEARCH_STOPPED` 和可恢复检查点，不把有限候选结果伪装成认证均衡。
+小规模穷举与回归测试已覆盖标量/批量/紧凑数组转移、deadline 数组直结算、偏离导致对手提前失败、上界支配、不同原生线程数的按位确定性、exact/adaptive 一致性、无纯均衡混合解以及 v1/v2 恢复。普通 CPython 3.13、一个 Python worker 和 64 个上界原生线程的五分钟根状态基准执行 7.812 亿次全动作偏离扫描，峰值 RSS 约 294 MiB；旧 101,534 行、21 MiB 检查点迁移后只保留 13,968 个非终止状态并缩至约 4.9 MiB。完整第六关仍应按 24 小时、256 GiB 的正式命令运行；预算耗尽时输出 `SEARCH_STOPPED` 和可恢复检查点，不把有限候选结果伪装成认证均衡。

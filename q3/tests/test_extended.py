@@ -23,7 +23,7 @@ from q3.adaptive import (
     solve_q3_2,
 )
 from q3.data import Q3Config, level5, level6, tiny_level6
-from q3.model import Action, ActionKind, PlayerState, Status
+from q3.model import Action, ActionKind, PlayerState, Status, terminal_state_value
 from q3.open_loop import (
     OpenLoopStrategy,
     Q31Limits,
@@ -41,8 +41,9 @@ from q3.stage_game import (
     select_pure_equilibrium,
 )
 from q3.stochastic_dp import ExactQ3Solver, SolverLimits
-from q3.storage import CompactStateCodec, LayerCache
+from q3.storage import CompactStateCodec, LayerCache, PackedStateCodec
 from q3.transition import (
+    apply_joint_profile_arrays,
     apply_joint_transition_batch,
     apply_unilateral_transition_arrays,
     materialize_transition_successors,
@@ -111,6 +112,9 @@ class PublicTypeTests(unittest.TestCase):
             PlayerState(Status.FAILED, fixed_payoff_scaled=-6_000_000_007),
         )
         self.assertEqual(codec.decode(codec.encode(state)), state)
+        packed = PackedStateCodec(codec.resources, cfg.n_players)
+        self.assertEqual(packed.decode(packed.encode(30, state)), (30, state))
+        self.assertEqual(len(packed.encode(30, state)), 68)
         cache = LayerCache(codec)
         from q3.model import StateValue
 
@@ -325,7 +329,15 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
             cfg, state, base, 1, deviations, "sunny"
         )
         general = apply_joint_transition_batch(cfg, state, profiles, "sunny")
+        general_arrays = apply_joint_profile_arrays(cfg, state, profiles, "sunny")
         np.testing.assert_array_equal(compact.valid, general.valid)
+        np.testing.assert_array_equal(general_arrays.valid, general.valid)
+        np.testing.assert_array_equal(general_arrays.position, compact.position)
+        np.testing.assert_array_equal(general_arrays.water, compact.water)
+        np.testing.assert_array_equal(general_arrays.food, compact.food)
+        np.testing.assert_array_equal(
+            general_arrays.cash_scaled, compact.cash_scaled
+        )
         np.testing.assert_array_equal(compact.edge_count, general.edge_count)
         np.testing.assert_array_equal(compact.mine_count, general.mine_count)
         np.testing.assert_array_equal(
@@ -335,6 +347,17 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
             materialize_transition_successors(cfg, state, compact),
             general.successors,
         )
+        solver = ExactQ3Solver(cfg)
+        try:
+            terminal = solver._evaluate_transition_arrays(
+                cfg.deadline, state, general_arrays
+            )
+            for row in np.flatnonzero(general.valid):
+                expected = terminal_state_value(cfg, general.successors[int(row)])
+                self.assertEqual(tuple(terminal.payoff[int(row)]), expected.value)
+                self.assertEqual(tuple(terminal.success[int(row)]), expected.success)
+        finally:
+            solver.close()
 
     def test_vectorized_action_candidates_match_scalar_reference(self) -> None:
         cfg = tiny_level6(n_players=3, deadline=2)
@@ -452,6 +475,67 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
                         )
                         exact = solver.solve_state(day, (player,)).value[0]
                         self.assertLessEqual(exact, bound.value(day, player))
+        finally:
+            solver.close()
+
+    def test_resource_bound_batch_and_threads_are_deterministic(self) -> None:
+        cfg = tiny_level6(n_players=1)
+        serial = ResourceAwareSinglePlayerUpperBound.build(cfg, threads=1)
+        parallel = ResourceAwareSinglePlayerUpperBound.build(cfg, threads=4)
+        resource_ids = np.asarray(
+            [
+                serial.resources.encode(0, 0),
+                serial.resources.encode(3, 3),
+                serial.resources.encode(6, 6),
+                serial.resources.encode(9, 3),
+            ],
+            dtype=np.int64,
+        )
+        positions = np.asarray([1, 2, 1, 2], dtype=np.int64)
+        expected = np.asarray(
+            [
+                serial._residual(0, int(position), int(resource_id))
+                for position, resource_id in zip(
+                    positions, resource_ids, strict=True
+                )
+            ]
+        )
+        np.testing.assert_array_equal(
+            serial.residuals_by_id(0, positions, resource_ids), expected
+        )
+        np.testing.assert_array_equal(
+            parallel.residuals_by_id(0, positions, resource_ids), expected
+        )
+        self.assertGreater(serial.cache_entries, 0)
+        self.assertGreater(serial.cache_bytes, 0)
+
+    def test_terminal_leaves_are_evaluated_without_cache_entries(self) -> None:
+        cfg = tiny_level6()
+        active_state = tuple(
+            PlayerState(
+                Status.ACTIVE,
+                position=2,
+                water=6,
+                food=6,
+                cash_scaled=cfg.init_cash_scaled,
+            )
+            for _ in range(cfg.n_players)
+        )
+        failed_state = tuple(
+            PlayerState(Status.FAILED, fixed_payoff_scaled=-cfg.money_scale)
+            for _ in range(cfg.n_players)
+        )
+        solver = ExactQ3Solver(cfg)
+        try:
+            deadline_value = solver.solve_state(cfg.deadline, active_state)
+            self.assertEqual(
+                solver.solve_state(cfg.deadline, active_state), deadline_value
+            )
+            solver.solve_state(1, failed_state)
+            self.assertEqual(len(solver._value_cache), 0)
+            self.assertEqual(solver.stats.cache_hits, 0)
+            self.assertEqual(solver.stats.states_solved, 3)
+            self.assertEqual(solver.stats.terminal_evaluations, 3)
         finally:
             solver.close()
 
@@ -627,10 +711,18 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((v2 / "manifest.json").read_text())["version"], 2
             )
+            manifest = json.loads((v2 / "manifest.json").read_text())
+            self.assertNotIn(
+                cfg.deadline,
+                {int(layer["day"]) for layer in manifest["layers"]},
+            )
 
             legacy = root / "legacy.pkl"
             payload = solver._checkpoint_payload()
             payload["version"] = 1
+            payload["value_cache"][(cfg.deadline, state)] = solver.solve_state(
+                cfg.deadline, state
+            )
             with legacy.open("wb") as handle:
                 pickle.dump(payload, handle)
             solver.close()
@@ -643,6 +735,12 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
 
             migrated = ExactQ3Solver(cfg, checkpoint_path=legacy)
             migrated.load_checkpoint()
+            self.assertTrue(
+                all(
+                    migrated._state_codec.decode(key)[0] != cfg.deadline
+                    for key in migrated._value_cache
+                )
+            )
             self.assertEqual(migrated.solve_state(1, state), expected)
             migrated.close()
 

@@ -120,7 +120,7 @@ limits.  The formal adaptive command is:
 uv run python -m q3.solve_q3_2 \
   --backend adaptive --mode level6-initial \
   --quality-regret 10 --wall-hours 24 --memory-gib 256 \
-  --equilibrium pure-mixed --workers 1 \
+  --equilibrium pure-mixed --workers 1 --bound-threads 64 \
   --max-states 30000000 --max-stage-evaluations 50000000 \
   --checkpoint q3/output/level6.chk \
   --checkpoint-every-states 1000000 \
@@ -131,7 +131,10 @@ Exceeding a budget returns `SEARCH_STOPPED` with an explicit unresolved gap;
 it never labels a finite candidate set as an exact solution.
 
 Numba is included in the UV environment and activates the fused transition
-kernel automatically.  `transition.py` retains an identical NumPy fallback.
+kernel and the day-layer resource-bound DP automatically.  Python successor
+workers remain at one under the GIL; `--bound-threads` controls independent
+native `prange` work and defaults to at most 64 threads.  `transition.py`
+retains an identical NumPy fallback.
 The compact village action representation stores integer columns rather than
 hundreds of thousands of Python objects and materializes only selected or
 profitable actions.
@@ -140,15 +143,23 @@ profitable actions.
 
 On the reference 128-core/A800 host, using one Python worker:
 
-- day-29 village state: 5.19 s before compact action arrays, 0.84 s after;
-- five-minute root probe: 101,534 solved states and 681.5 million complete
-  unilateral deviations, with 729 MiB peak RSS;
-- the 101,534-state v2 checkpoint is 21 MiB (about 215 bytes/state in that
-  layer mix).  A long-run checkpoint should be budgeted at roughly
-  0.2--0.4 KiB per cached state, so 10 million states are about 2--4 GiB.
+- day-29 village state: 5.19 s before compact action arrays, 0.84 s after that
+  change, and 0.71 s after terminal array settlement;
+- the resource-aware upper bound is stored in lazy `float64` day layers.  A
+  complete level-6 suffix is at most about 636 MiB; the five-minute root probe
+  needed only day 28--29, 45.3 MiB, built in 0.051 s with 64 native threads;
+- the current five-minute root probe performs 781.2 million complete
+  unilateral deviations, 14.6% above the previous 681.5 million probe, with
+  294 MiB peak RSS instead of 696 MiB;
+- terminal leaves are settled directly and are not retained.  The probe made
+  258,237 state evaluations, including 243,495 terminal settlements, while
+  retaining only 14,742 non-terminal value states;
+- migrating the previous 101,534-row checkpoint drops its 87,566 terminal
+  rows and rewrites packed policy keys, reducing it from 21 MiB to 4.9 MiB.
+  Long-run v2 storage should be budgeted at roughly 0.2--0.3 KiB per retained
+  non-terminal state plus policy metadata.
 
-The same probe does not establish the total number of states required for the
-root certificate.  At its observed average, 10 million states would take about
-8.2 hours and a 24-hour run could visit roughly 29 million states, but later
-village distributions may change that rate.  The formal result is therefore
-still gated by the reported root regret upper bound, not by elapsed time alone.
+The probe does not establish the total number of non-terminal states required
+for the root certificate.  Later village distributions may change both the
+state and full-deviation rates.  The formal result is therefore still gated by
+the reported root regret upper bound, not by elapsed time alone.

@@ -729,21 +729,29 @@ def apply_unilateral_transition_encoded_arrays(
     )
 
 
-def apply_joint_transition_batch(
+def apply_joint_profile_arrays(
     cfg: Q3Config,
     state: JointState,
     profiles: Sequence[Sequence[Action]],
     weather: Weather,
-) -> BatchTransitionResult:
-    """Vectorize interaction counts, feasibility checks, and numeric updates."""
+) -> BatchTransitionArrays:
+    """Apply profiles without materializing Python successor states."""
     batch = len(profiles)
     n = cfg.n_players
     if len(state) != n:
         raise ValueError("state player count does not match configuration")
     if batch == 0:
-        empty = np.empty((0, n), dtype=np.int16)
-        return BatchTransitionResult(
-            np.empty(0, dtype=bool), (), empty, empty.copy(), empty.copy()
+        empty_i16 = np.empty((0, n), dtype=np.int16)
+        return BatchTransitionArrays(
+            valid=np.empty(0, dtype=bool),
+            kind=np.empty((0, n), dtype=np.int8),
+            position=empty_i16,
+            water=np.empty((0, n), dtype=np.int32),
+            food=np.empty((0, n), dtype=np.int32),
+            cash_scaled=np.empty((0, n), dtype=np.int64),
+            edge_count=empty_i16.copy(),
+            mine_count=empty_i16.copy(),
+            village_buyer_count=empty_i16.copy(),
         )
     if any(len(profile) != n for profile in profiles):
         raise ValueError("profile player count does not match configuration")
@@ -763,9 +771,19 @@ def apply_joint_transition_batch(
         [[action.buy_food for action in profile] for profile in profiles],
         dtype=np.int32,
     )
-    arrays = _apply_transition_arrays(
+    return _apply_transition_arrays(
         cfg, state, weather, kind, destination, buy_w, buy_f
     )
+
+
+def apply_joint_transition_batch(
+    cfg: Q3Config,
+    state: JointState,
+    profiles: Sequence[Sequence[Action]],
+    weather: Weather,
+) -> BatchTransitionResult:
+    """Vectorize interaction counts, feasibility checks, and numeric updates."""
+    arrays = apply_joint_profile_arrays(cfg, state, profiles, weather)
     successors = materialize_transition_successors(cfg, state, arrays)
     return BatchTransitionResult(
         valid=arrays.valid,
