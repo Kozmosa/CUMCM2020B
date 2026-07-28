@@ -17,6 +17,7 @@ from .adaptive import AdaptiveOptions, AdaptiveQ3Solver, solve_q3_2
 from .data import level6, tiny_level6
 from .interaction import NUMBA_AVAILABLE
 from .model import PlayerState, Status
+from .purchase_oracle import CUDA_PURCHASE_AVAILABLE, NUMBA_PURCHASE_AVAILABLE
 from .runtime import BudgetManager
 from .reports import json_safe
 from .stage_game import NoPureEquilibrium
@@ -108,6 +109,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="native threads for the resource-bound DP (default: up to 64)",
     )
+    parser.add_argument(
+        "--purchase-oracle",
+        choices=("auto", "cpu", "cuda", "off"),
+        default="auto",
+        help="exact purchase-lattice screening backend",
+    )
+    parser.add_argument(
+        "--purchase-threads",
+        type=int,
+        default=None,
+        help="native CPU threads for large purchase lattices (default: up to 64)",
+    )
+    parser.add_argument("--purchase-cuda-device", type=int, default=0)
+    parser.add_argument("--purchase-cuda-min-actions", type=int, default=131_072)
+    parser.add_argument("--purchase-parallel-min-actions", type=int, default=32_768)
     parser.add_argument("--checkpoint", type=str)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint-every-states", type=int, default=1_000_000)
@@ -145,6 +161,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
     if args.bound_threads is not None and args.bound_threads <= 0:
         parser.error("--bound-threads must be positive")
+    if args.purchase_threads is not None and args.purchase_threads <= 0:
+        parser.error("--purchase-threads must be positive")
+    if args.purchase_cuda_device < 0:
+        parser.error("--purchase-cuda-device cannot be negative")
+    if args.purchase_cuda_min_actions <= 0 or args.purchase_parallel_min_actions <= 0:
+        parser.error("purchase oracle thresholds must be positive")
+    if args.purchase_oracle == "cuda" and not CUDA_PURCHASE_AVAILABLE:
+        parser.error("--purchase-oracle cuda requested but CUDA is unavailable")
     if args.resume and not args.checkpoint:
         parser.error("--resume requires --checkpoint")
     if not 0.0 <= args.p_storm < 1.0:
@@ -177,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
         max_restricted_rounds=args.max_restricted_rounds,
         equilibrium=args.equilibrium,
         seed=args.seed,
+        purchase_oracle_backend=args.purchase_oracle,
+        purchase_oracle_threads=args.purchase_threads,
+        purchase_cuda_device=args.purchase_cuda_device,
+        purchase_cuda_min_actions=args.purchase_cuda_min_actions,
+        purchase_parallel_min_actions=args.purchase_parallel_min_actions,
     )
     memory_soft_gib = min(args.memory_gib, 240.0)
     budget = BudgetManager(
@@ -232,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
                 "workers": workers,
                 "gil_enabled": _gil_enabled(),
                 "numba_available": NUMBA_AVAILABLE,
+                "purchase_numba_available": NUMBA_PURCHASE_AVAILABLE,
+                "purchase_cuda_available": CUDA_PURCHASE_AVAILABLE,
                 "resume_command": resume_command,
             }
         )
@@ -314,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
         {
             "elapsed_seconds": perf_counter() - started,
             "numba_available": NUMBA_AVAILABLE,
+            "purchase_numba_available": NUMBA_PURCHASE_AVAILABLE,
+            "purchase_cuda_available": CUDA_PURCHASE_AVAILABLE,
             "gil_enabled": (
                 _gil_enabled()
             ),

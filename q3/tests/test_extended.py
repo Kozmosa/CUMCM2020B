@@ -31,6 +31,11 @@ from q3.open_loop import (
     replay_joint_strategy,
 )
 from q3.pruning import ResourceAwareSinglePlayerUpperBound
+from q3.purchase_oracle import (
+    CUDA_PURCHASE_AVAILABLE,
+    PurchaseLatticeOracle,
+    PurchaseOracleOptions,
+)
 from q3.reports import PolicyEntry
 from q3.runtime import BudgetExceeded, BudgetManager
 from q3.resource_index import ResourceIndex
@@ -46,6 +51,7 @@ from q3.transition import (
     apply_joint_profile_arrays,
     apply_joint_transition_batch,
     apply_unilateral_transition_arrays,
+    apply_unilateral_transition_encoded_arrays,
     materialize_transition_successors,
 )
 
@@ -508,6 +514,104 @@ class BoundsAdaptiveAndCheckpointTests(unittest.TestCase):
         )
         self.assertGreater(serial.cache_entries, 0)
         self.assertGreater(serial.cache_bytes, 0)
+
+    def test_purchase_oracle_matches_complete_transition_bounds(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=3)
+        player = PlayerState(
+            Status.ACTIVE,
+            position=2,
+            water=3,
+            food=4,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        state = tuple(player for _ in range(cfg.n_players))
+        action_spaces = tuple(
+            enumerate_individual_actions(cfg, item, "sunny") for item in state
+        )
+        compact = enumerate_individual_action_arrays(cfg, player, "sunny")
+        solver = AdaptiveQ3Solver(cfg)
+        oracle = PurchaseLatticeOracle(
+            cfg,
+            solver._upper_bound,
+            PurchaseOracleOptions(backend="cpu", parallel_min_actions=1),
+        )
+        try:
+            rng = Random(20260728)
+            profiles = [
+                tuple(rng.choice(actions) for actions in action_spaces)
+                for _ in range(12)
+            ]
+            profiles.append(
+                (
+                    Action(ActionKind.STAY),
+                    Action(ActionKind.MINE),
+                    Action(ActionKind.MOVE, destination=3),
+                )
+            )
+            for base in profiles:
+                batch = apply_unilateral_transition_encoded_arrays(
+                    cfg,
+                    state,
+                    base,
+                    0,
+                    compact.kind,
+                    compact.destination,
+                    compact.buy_water,
+                    compact.buy_food,
+                    "sunny",
+                )
+                expected = solver._unilateral_upper_bounds(1, state, batch, 0)
+                finite = expected[np.isfinite(expected)]
+                for threshold in (-float("inf"), float(np.median(finite))):
+                    screened = oracle.screen(
+                        1, state, base, 0, compact, "sunny", threshold
+                    )
+                    expected_indices = np.flatnonzero(
+                        np.isfinite(expected) & (expected >= threshold)
+                    )
+                    np.testing.assert_array_equal(
+                        screened.survivor_indices, expected_indices
+                    )
+                    np.testing.assert_array_equal(
+                        screened.survivor_bounds, expected[expected_indices]
+                    )
+                    omitted = np.isfinite(expected) & (expected < threshold)
+                    if np.any(omitted):
+                        self.assertGreaterEqual(
+                            screened.max_pruned_bound,
+                            float(np.max(expected[omitted])),
+                        )
+        finally:
+            solver.close()
+
+    @unittest.skipUnless(CUDA_PURCHASE_AVAILABLE, "CUDA is unavailable")
+    def test_cuda_purchase_oracle_matches_cpu_bit_for_bit(self) -> None:
+        cfg = tiny_level6(n_players=3, deadline=3)
+        player = PlayerState(
+            Status.ACTIVE,
+            position=2,
+            water=3,
+            food=4,
+            cash_scaled=cfg.init_cash_scaled,
+        )
+        state = tuple(player for _ in range(cfg.n_players))
+        base = (
+            Action(ActionKind.MOVE, destination=3),
+            Action(ActionKind.STAY, buy_water=1),
+            Action(ActionKind.MINE, buy_food=1),
+        )
+        actions = enumerate_individual_action_arrays(cfg, player, "sunny")
+        bound = ResourceAwareSinglePlayerUpperBound.build(cfg)
+        cpu = PurchaseLatticeOracle(
+            cfg, bound, PurchaseOracleOptions(backend="cpu")
+        ).screen(1, state, base, 0, actions, "sunny", -float("inf"))
+        gpu = PurchaseLatticeOracle(
+            cfg,
+            bound,
+            PurchaseOracleOptions(backend="cuda", cuda_min_actions=1),
+        ).screen(1, state, base, 0, actions, "sunny", -float("inf"))
+        np.testing.assert_array_equal(gpu.survivor_indices, cpu.survivor_indices)
+        np.testing.assert_array_equal(gpu.survivor_bounds, cpu.survivor_bounds)
 
     def test_terminal_leaves_are_evaluated_without_cache_entries(self) -> None:
         cfg = tiny_level6()

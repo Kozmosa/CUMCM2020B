@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from itertools import permutations, product
 from math import prod
 from pathlib import Path
+from time import perf_counter
 from typing import Sequence
 
 import numpy as np
@@ -33,6 +34,10 @@ from .model import (
     terminal_state_value,
 )
 from .profile_enum import action_skeleton, iter_index_blocks, profiles_from_indices
+from .purchase_oracle import (
+    PurchaseLatticeOracle,
+    PurchaseOracleOptions,
+)
 from .reports import PolicyEntry, Q32SolveResult
 from .runtime import BudgetManager
 from .stage_game import (
@@ -71,6 +76,11 @@ class AdaptiveOptions:
     equilibrium: str = "pure-mixed"
     seed: int = 20260728
     warm_initial_actions: tuple[Action, ...] = ()
+    purchase_oracle_backend: str = "auto"
+    purchase_oracle_threads: int | None = None
+    purchase_cuda_device: int = 0
+    purchase_cuda_min_actions: int = 131_072
+    purchase_parallel_min_actions: int = 32_768
 
     def __post_init__(self) -> None:
         if min(
@@ -84,6 +94,13 @@ class AdaptiveOptions:
             raise ValueError("adaptive candidate and round limits must be positive")
         if self.equilibrium not in {"pure", "pure-mixed"}:
             raise ValueError("equilibrium must be 'pure' or 'pure-mixed'")
+        PurchaseOracleOptions(
+            backend=self.purchase_oracle_backend,
+            threads=self.purchase_oracle_threads,
+            cuda_device=self.purchase_cuda_device,
+            cuda_min_actions=self.purchase_cuda_min_actions,
+            parallel_min_actions=self.purchase_parallel_min_actions,
+        )
 
 
 @dataclass
@@ -97,6 +114,14 @@ class AdaptiveStats:
     certified_stages: int = 0
     approximate_mixed_stages: int = 0
     max_stage_regret_upper: float = 0.0
+    purchase_oracle_calls: int = 0
+    purchase_oracle_actions: int = 0
+    purchase_oracle_cpu_calls: int = 0
+    purchase_oracle_cuda_calls: int = 0
+    purchase_oracle_seconds: float = 0.0
+    purchase_regions_pruned: int = 0
+    purchase_oracle_cache_entries: int = 0
+    purchase_oracle_cache_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -261,6 +286,17 @@ class AdaptiveQ3Solver(ExactQ3Solver):
         self.options = options or AdaptiveOptions()
         self.quality_target = quality_target
         self.adaptive_stats = AdaptiveStats()
+        self._purchase_oracle = PurchaseLatticeOracle(
+            cfg,
+            self._upper_bound,
+            PurchaseOracleOptions(
+                backend=self.options.purchase_oracle_backend,
+                threads=self.options.purchase_oracle_threads,
+                cuda_device=self.options.purchase_cuda_device,
+                cuda_min_actions=self.options.purchase_cuda_min_actions,
+                parallel_min_actions=self.options.purchase_parallel_min_actions,
+            ),
+        )
         self._policy_entry_cache: dict[
             tuple[bytes, Weather], tuple[PolicyEntry, ...]
         ] = {}
@@ -269,6 +305,10 @@ class AdaptiveQ3Solver(ExactQ3Solver):
         super().clear()
         self.adaptive_stats = AdaptiveStats()
         self._policy_entry_cache.clear()
+
+    def close(self) -> None:
+        self._purchase_oracle.close()
+        super().close()
 
     def _write_v2_checkpoint(self, directory: Path) -> None:
         super()._write_v2_checkpoint(directory)
@@ -290,9 +330,20 @@ class AdaptiveQ3Solver(ExactQ3Solver):
         if source is not None and source.is_dir() and (source / "adaptive.pkl").exists():
             with (source / "adaptive.pkl").open("rb") as handle:
                 payload = pickle.load(handle)
-            if payload.get("options") != self.options:
+            raw_options = payload.get("options")
+            loaded_options = (
+                AdaptiveOptions(**vars(raw_options))
+                if isinstance(raw_options, AdaptiveOptions)
+                else raw_options
+            )
+            if loaded_options != self.options:
                 raise ValueError("adaptive checkpoint options do not match")
-            self.adaptive_stats = payload["stats"]
+            raw_stats = payload["stats"]
+            self.adaptive_stats = (
+                AdaptiveStats(**vars(raw_stats))
+                if isinstance(raw_stats, AdaptiveStats)
+                else AdaptiveStats(**raw_stats)
+            )
             self._policy_entry_cache = {
                 key: entries
                 for key, entries in self._normalize_policy_mapping(
@@ -768,6 +819,111 @@ class AdaptiveQ3Solver(ExactQ3Solver):
             profitable: list[tuple[float, Action]] = []
             actions = full_actions[player]
             self.adaptive_stats.full_deviation_actions += len(actions)
+            if (
+                isinstance(actions, IndividualActionArrays)
+                and self.enable_bound_pruning
+                and self.options.purchase_oracle_backend != "off"
+            ):
+                threshold = (
+                    current
+                    - self.equilibrium_atol
+                    - self.bound_pruning_slack
+                )
+                screened = self._purchase_oracle.screen(
+                    day + 1,
+                    state,
+                    equilibrium.actions,
+                    player,
+                    actions,
+                    weather,
+                    threshold,
+                )
+                self.adaptive_stats.purchase_oracle_calls += 1
+                self.adaptive_stats.purchase_oracle_actions += len(actions)
+                self.adaptive_stats.purchase_oracle_seconds += (
+                    screened.elapsed_seconds
+                )
+                self.adaptive_stats.purchase_regions_pruned += (
+                    screened.regions_pruned
+                )
+                self.adaptive_stats.purchase_oracle_cache_entries = (
+                    self._purchase_oracle.cache_entries
+                )
+                self.adaptive_stats.purchase_oracle_cache_bytes = (
+                    self._purchase_oracle.cache_bytes
+                )
+                if screened.backend == "cuda":
+                    self.adaptive_stats.purchase_oracle_cuda_calls += 1
+                else:
+                    self.adaptive_stats.purchase_oracle_cpu_calls += 1
+                self.adaptive_stats.deviation_actions_pruned += (
+                    screened.pruned_count
+                )
+                self._update_stats(upper_bound_profiles=len(actions))
+                self._sync_upper_bound_stats()
+                if np.isfinite(screened.max_pruned_bound):
+                    best_upper = max(best_upper, screened.max_pruned_bound)
+
+                survivor_indices = screened.survivor_indices
+                for survivor_start in range(
+                    0, len(survivor_indices), self.limits.profile_chunk_size
+                ):
+                    self._check_cancelled()
+                    selected = survivor_indices[
+                        survivor_start : survivor_start
+                        + self.limits.profile_chunk_size
+                    ]
+                    batch = apply_unilateral_transition_encoded_arrays(
+                        self.cfg,
+                        state,
+                        equilibrium.actions,
+                        player,
+                        actions.kind[selected],
+                        actions.destination[selected],
+                        actions.buy_water[selected],
+                        actions.buy_food[selected],
+                        weather,
+                    )
+                    if not np.all(batch.valid):
+                        raise AssertionError(
+                            "purchase oracle retained an invalid deviation"
+                        )
+                    keep = batch.valid.copy()
+                    evaluation = self._evaluate_transition_arrays(
+                        day + 1, state, batch, keep
+                    )
+                    self.adaptive_stats.deviation_actions_evaluated += len(
+                        selected
+                    )
+                    for row, action_index in enumerate(selected):
+                        value = float(evaluation.payoff[row, player])
+                        best_exact = max(best_exact, value)
+                        action = actions.action_at(int(action_index))
+                        if (
+                            value > current + self.equilibrium_atol
+                            and action not in candidate_sets[player]
+                        ):
+                            profitable.append((value, action))
+                profitable.sort(key=lambda item: (-item[0], item[1].code))
+                player_additions = tuple(
+                    action
+                    for _, action in profitable[
+                        : self.options.additions_per_player
+                    ]
+                )
+                player_lower = max(0.0, best_exact - current)
+                player_upper = max(
+                    0.0, max(best_exact, best_upper) - current
+                )
+                additions.append(list(player_additions))
+                lower.append(player_lower)
+                upper.append(player_upper)
+                symmetric_results[symmetry_key] = (
+                    player_lower,
+                    player_upper,
+                    player_additions,
+                )
+                continue
             scan_chunk_size = (
                 max(self.limits.profile_chunk_size, 65_536)
                 if isinstance(actions, IndividualActionArrays)
@@ -1149,6 +1305,120 @@ class AdaptiveQ3Solver(ExactQ3Solver):
             profitable: list[tuple[float, Action]] = []
             actions = full_actions[player]
             self.adaptive_stats.full_deviation_actions += len(actions)
+            if (
+                self.enable_bound_pruning
+                and self.options.purchase_oracle_backend != "off"
+            ):
+                started = perf_counter()
+                buy_water = np.fromiter(
+                    (action.buy_water for action in actions),
+                    dtype=np.int32,
+                    count=len(actions),
+                )
+                buy_food = np.fromiter(
+                    (action.buy_food for action in actions),
+                    dtype=np.int32,
+                    count=len(actions),
+                )
+                original = state[player]
+                next_water = original.water + buy_water
+                next_food = original.food + buy_food
+                cost_scaled = self.cfg.money_scale * (
+                    self.cfg.water_price * buy_water.astype(np.int64)
+                    + self.cfg.food_price * buy_food.astype(np.int64)
+                )
+                next_cash = original.cash_scaled - cost_scaled
+                resource_ids = self._upper_bound.resources.id_grid[
+                    next_water, next_food
+                ]
+                positions = np.full(
+                    len(actions), original.position, dtype=np.int16
+                )
+                residual = self._upper_bound.residuals_by_id(
+                    0, positions, resource_ids
+                )
+                bounds = np.nextafter(
+                    next_cash.astype(np.float64) / self.cfg.money_scale
+                    + residual,
+                    np.inf,
+                )
+                threshold = (
+                    current
+                    - self.equilibrium_atol
+                    - self.bound_pruning_slack
+                )
+                keep = bounds >= threshold
+                pruned = ~keep
+                if np.any(pruned):
+                    best_upper = max(
+                        best_upper, float(np.max(bounds[pruned]))
+                    )
+                survivor_indices = np.flatnonzero(keep)
+                self.adaptive_stats.deviation_actions_pruned += int(
+                    np.sum(pruned)
+                )
+                self.adaptive_stats.purchase_oracle_calls += 1
+                self.adaptive_stats.purchase_oracle_actions += len(actions)
+                self.adaptive_stats.purchase_oracle_cpu_calls += 1
+                self.adaptive_stats.purchase_oracle_seconds += (
+                    perf_counter() - started
+                )
+                self._update_stats(upper_bound_profiles=len(actions))
+                self._sync_upper_bound_stats()
+                for survivor_start in range(
+                    0, len(survivor_indices), self.limits.profile_chunk_size
+                ):
+                    self._check_cancelled()
+                    selected = survivor_indices[
+                        survivor_start : survivor_start
+                        + self.limits.profile_chunk_size
+                    ]
+                    successors: list[JointState | None] = []
+                    for action_index in selected:
+                        profile = list(equilibrium.actions)
+                        profile[player] = actions[int(action_index)]
+                        post = apply_initial_purchases(self.cfg, state, profile)
+                        if post is None:
+                            raise AssertionError(
+                                "initial purchase oracle retained an invalid action"
+                            )
+                        successors.append(post)
+                    selected_valid = np.ones(len(selected), dtype=bool)
+                    evaluation = self._evaluate_successors(
+                        0, selected_valid, successors
+                    )
+                    self.adaptive_stats.deviation_actions_evaluated += len(
+                        selected
+                    )
+                    for row, action_index in enumerate(selected):
+                        value = float(evaluation.payoff[row, player])
+                        best_exact = max(best_exact, value)
+                        action = actions[int(action_index)]
+                        if (
+                            value > current + self.equilibrium_atol
+                            and action not in candidate_sets[player]
+                        ):
+                            profitable.append((value, action))
+                profitable.sort(key=lambda item: (-item[0], item[1].code))
+                player_additions = tuple(
+                    action
+                    for _, action in profitable[
+                        : self.options.additions_per_player
+                    ]
+                )
+                player_lower = max(0.0, best_exact - current)
+                player_upper = max(
+                    0.0, max(best_exact, best_upper) - current
+                )
+                additions.append(list(player_additions))
+                lower.append(player_lower)
+                upper.append(player_upper)
+                symmetric_results[symmetry_key] = (
+                    player_lower,
+                    player_upper,
+                    player_additions,
+                )
+                continue
             for start in range(0, len(actions), self.limits.profile_chunk_size):
                 self._check_cancelled()
                 block = actions[start : start + self.limits.profile_chunk_size]

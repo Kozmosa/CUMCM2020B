@@ -23,6 +23,7 @@ This directory now contains the shared exact rule core plus Q3.1 and Q3.2 solver
 - a compact 67-bit/Numba Q3.1 frontier that removes opponent cash only when the map has no villages;
 - adaptive restricted games with full unilateral-deviation scans and explicit regret bounds;
 - compact structure-of-arrays village action spaces and fused Numba unilateral scans;
+- an exact purchase-lattice max-pyramid oracle with CPU/Numba and optional CUDA screening;
 - symmetric-stage reduction and fully verified best-response fixed-point shortcuts;
 - finite-support mixed fallback through deterministic NashConv minimization.
 
@@ -121,6 +122,7 @@ uv run python -m q3.solve_q3_2 \
   --backend adaptive --mode level6-initial \
   --quality-regret 10 --wall-hours 24 --memory-gib 256 \
   --equilibrium pure-mixed --workers 1 --bound-threads 64 \
+  --purchase-oracle auto --purchase-threads 64 \
   --max-states 30000000 --max-stage-evaluations 50000000 \
   --checkpoint q3/output/level6.chk \
   --checkpoint-every-states 1000000 \
@@ -139,6 +141,16 @@ The compact village action representation stores integer columns rather than
 hundreds of thousands of Python objects and materializes only selected or
 profitable actions.
 
+`--purchase-oracle auto` uses the exact max-pyramid region oracle.  It stores
+an outward-rounded maximum for each rectangular water/food region and rejects
+the whole region when that maximum cannot improve the current payoff.  The
+remaining leaves are checked by the same fused transition kernel before
+recursion.  `--purchase-oracle cuda` enables the complete CUDA point scanner
+for explicit GPU profiling; on the reference A800, branch divergence and many
+short launches make it slower than the region oracle, so CUDA is not selected
+by `auto`.  `--purchase-oracle off` retains the old complete point scan as a
+reference implementation.
+
 ## Current CPython 3.13 profile
 
 On the reference 128-core/A800 host, using one Python worker:
@@ -148,9 +160,15 @@ On the reference 128-core/A800 host, using one Python worker:
 - the resource-aware upper bound is stored in lazy `float64` day layers.  A
   complete level-6 suffix is at most about 636 MiB; the five-minute root probe
   needed only day 28--29, 45.3 MiB, built in 0.051 s with 64 native threads;
-- the current five-minute root probe performs 781.2 million complete
-  unilateral deviations, 14.6% above the previous 681.5 million probe, with
-  294 MiB peak RSS instead of 696 MiB;
+- before the region oracle, a 60-second root probe scanned 213.6 million
+  unilateral deviations and evaluated 60,290 states;
+- with the exact max-pyramid oracle, the same 60-second probe certifies 770.2
+  million deviations and evaluates 254,841 states: 3.61x deviation throughput
+  and 4.23x state throughput.  The oracle itself takes 2.15 seconds, prunes
+  99.998% of purchase actions, and uses 331 MiB peak RSS;
+- the new 60-second probe reaches almost the same 255k state evaluations as
+  the previous five-minute point-scan probe, an end-to-end improvement of
+  about 4.9x at that frontier;
 - terminal leaves are settled directly and are not retained.  The probe made
   258,237 state evaluations, including 243,495 terminal settlements, while
   retaining only 14,742 non-terminal value states;
@@ -160,6 +178,7 @@ On the reference 128-core/A800 host, using one Python worker:
   non-terminal state plus policy metadata.
 
 The probe does not establish the total number of non-terminal states required
-for the root certificate.  Later village distributions may change both the
-state and full-deviation rates.  The formal result is therefore still gated by
-the reported root regret upper bound, not by elapsed time alone.
+for the root certificate.  A linear extrapolation of the previous 24-hour
+budget is now roughly five hours, but later village distributions may change
+both the state and full-deviation rates.  The formal result is therefore still
+gated by the reported root regret upper bound, not by elapsed time alone.

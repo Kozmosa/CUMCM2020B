@@ -8,6 +8,19 @@ from itertools import chain
 
 import numpy as np
 
+try:
+    from numba import njit
+
+    NUMBA_ACTION_ENUM_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional acceleration dependency
+    NUMBA_ACTION_ENUM_AVAILABLE = False
+
+    def njit(*args, **kwargs):
+        def decorate(function):
+            return function
+
+        return decorate
+
 from .data import Q3Config, Weather
 from .model import (
     FAIL_ACTION,
@@ -95,6 +108,99 @@ def _purchase_options(
             if positive_only and buy_w + buy_f == 0:
                 continue
             yield buy_w, buy_f
+
+
+@njit(cache=True)
+def _purchase_option_arrays_numba(
+    water,
+    food,
+    cash_scaled,
+    weight_limit,
+    water_weight,
+    food_weight,
+    price_water,
+    price_food,
+    positive_only,
+):
+    max_water = (weight_limit - water_weight * water) // water_weight
+    count = 0
+    for buy_water in range(max_water + 1):
+        remaining_weight = (
+            weight_limit
+            - water_weight * (water + buy_water)
+            - food_weight * food
+        )
+        if remaining_weight < 0:
+            break
+        max_food_weight = remaining_weight // food_weight
+        remaining_cash = cash_scaled - price_water * buy_water
+        if remaining_cash < 0:
+            break
+        max_food_cash = (
+            remaining_cash // price_food if price_food else max_food_weight
+        )
+        max_food = min(max_food_weight, max_food_cash)
+        count += max_food + 1
+        if positive_only and buy_water == 0:
+            count -= 1
+
+    purchases = np.empty((count, 2), dtype=np.int32)
+    row = 0
+    for buy_water in range(max_water + 1):
+        remaining_weight = (
+            weight_limit
+            - water_weight * (water + buy_water)
+            - food_weight * food
+        )
+        if remaining_weight < 0:
+            break
+        max_food_weight = remaining_weight // food_weight
+        remaining_cash = cash_scaled - price_water * buy_water
+        if remaining_cash < 0:
+            break
+        max_food_cash = (
+            remaining_cash // price_food if price_food else max_food_weight
+        )
+        max_food = min(max_food_weight, max_food_cash)
+        for buy_food in range(max_food + 1):
+            if positive_only and buy_water + buy_food == 0:
+                continue
+            purchases[row, 0] = buy_water
+            purchases[row, 1] = buy_food
+            row += 1
+    return purchases
+
+
+def _purchase_option_arrays(
+    cfg: Q3Config,
+    state: PlayerState,
+    *,
+    price_factor: int,
+    positive_only: bool = False,
+) -> np.ndarray:
+    if NUMBA_ACTION_ENUM_AVAILABLE:
+        return _purchase_option_arrays_numba(
+            state.water,
+            state.food,
+            state.cash_scaled,
+            cfg.weight_limit,
+            cfg.water_weight,
+            cfg.food_weight,
+            price_factor * cfg.water_price * cfg.money_scale,
+            price_factor * cfg.food_price * cfg.money_scale,
+            positive_only,
+        )
+    return np.asarray(
+        tuple(
+            _purchase_options(
+                cfg,
+                state,
+                price_factor=price_factor,
+                positive_only=positive_only,
+            )
+        ),
+        dtype=np.int32,
+    ).reshape((-1, 2))
 
 
 def enumerate_initial_purchases(
@@ -201,17 +307,15 @@ def enumerate_individual_action_arrays(
             ((0, 1),),
         )
 
-    purchases: Iterator[tuple[int, int]] = iter(((0, 0),))
     if state.position in cfg.villages:
-        purchases = chain(
-            purchases,
-            _purchase_options(cfg, state, price_factor=2, positive_only=True),
+        positive = _purchase_option_arrays(
+            cfg, state, price_factor=2, positive_only=True
         )
-    flat_purchases = np.fromiter(
-        (quantity for pair in purchases for quantity in pair),
-        dtype=np.int32,
-    )
-    purchase_pairs = flat_purchases.reshape((-1, 2))
+        purchase_pairs = np.vstack(
+            (np.zeros((1, 2), dtype=np.int32), positive)
+        )
+    else:
+        purchase_pairs = np.zeros((1, 2), dtype=np.int32)
     purchase_water = purchase_pairs[:, 0]
     purchase_food = purchase_pairs[:, 1]
 
