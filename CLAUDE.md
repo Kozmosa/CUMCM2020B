@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **CUMCM 2020B — "Crossing the Desert" (穿越沙漠)**
 
-A mathematical modeling competition problem about optimal strategy in a desert-crossing game. Only **Q1** (Question 1 — single player, known weather) has been implemented so far.
+A mathematical modeling competition problem about optimal strategy in a desert-crossing game. **Q1** (single player, known weather) and **Q2** (single player, only current-day weather known) are implemented.
 
 ## Commands
 
@@ -30,6 +30,10 @@ uv run python -m q1.solve --out path/to/out.xlsx
 
 # Programmatic usage
 uv run python -c "from q1 import solve, load_level; print(solve(load_level('1')).best_value)"
+
+# Q2 stochastic solver (levels 3 and 4)
+uv run python -m q2.solve --quiet
+uv run python -m q2.solve --quiet --sensitivity
 ```
 
 Dependencies are managed via `uv` (Python ≥3.13). Install with `uv sync`.

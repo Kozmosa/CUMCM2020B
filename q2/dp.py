@@ -7,7 +7,11 @@ Bellman recursion is
 
     V_t(s) = sum_theta p(theta) * max_a  V_{t+1}(g(s, a, theta))   (v != end, t<T)
     V_T(s) = J(s)        if v == end           (cash + 1/2 p_W W + 1/2 p_F F)
-            -M           otherwise             (failure penalty, replaces -inf)
+            cash - M     otherwise             (failure payoff, replaces -inf)
+
+Thus the solver maximises a single penalty-adjusted expected payoff.  It does
+not lexicographically maximise success probability and then terminal funds.
+The success-probability table is propagated under the U-optimal policy only.
 
 State decomposition
 -------------------
@@ -22,7 +26,7 @@ where U_t stores *future* net cash contributions:
     - mining income      +R
     - village purchase   -p_W q_W - p_F q_F
     - terminal refund    +(1/2)(p_W W + p_F F)   if the end is reached
-    - failure penalty    -M                      otherwise
+    - failure residual   -M                      otherwise (cash remains in +C)
 
 Index convention (same as Q1)
 -----------------------------
@@ -62,9 +66,10 @@ after_arrival : buy at the village where the player *ends* the day.  The
 The day-0 purchase is a direct argmax of  cash_after(q) + U[0][start, q]
 over the weight mask (buying from (0, 0) at base prices needs no lift).
 
-Outputs: optimal expected terminal funds V0, the success probability under
-the optimal policy, and the optimal day-0 purchase.  The full U table is kept
-for policy probing / simulation (P is rolled two-layer and not stored).
+Outputs: optimal penalty-adjusted expected payoff V0, the success probability
+associated with that value-optimal policy, and the optimal day-0 purchase.
+The full U table is kept for policy probing / simulation (P is rolled
+two-layer and not stored).
 """
 
 from __future__ import annotations
@@ -89,9 +94,10 @@ _NINF = float(-1.0e30)
 
 @dataclass
 class SolveResult:
-    # Optimal expected terminal funds at day 0; equals cash_after_q0 + U[0].
+    # Optimal penalty-adjusted expected payoff at day 0; equals cash_after_q0
+    # + U[0]. This is not a lexicographic success-probability optimum.
     V0: float
-    # Success probability under the optimal policy with the chosen day-0 buy.
+    # Success probability under the V0-optimal policy with the chosen day-0 buy.
     prob_succ: float
     # Day-0 purchase achieving V0 (water, food).
     best_q0: Tuple[int, int]

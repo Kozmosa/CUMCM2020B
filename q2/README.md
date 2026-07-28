@@ -3,6 +3,12 @@
 Unknown-future-weather single-player optimal strategy (backward induction DP;
 only the current day's weather is observed before acting).
 
+The implemented objective is a **single penalty-adjusted expected payoff**:
+successful paths receive cash plus the half-price resource refund, while a
+failed path receives its remaining cash minus `M`. `P_succ` is the success
+probability associated with the payoff-optimal policy; it is not itself the
+primary optimisation objective.
+
 ```bash
 uv run python -m q2.solve                          # both levels, start_of_day
 uv run python -m q2.solve --level 4
