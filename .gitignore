@@ -12,6 +12,8 @@ __pycache__/
 
 # Local solver profiles and resumable benchmark checkpoints
 profile_output/
+q3/output/level6-formal/checkpoint/
+q3/output/level6-formal/run.log
 
 # Editors
 .vscode/
