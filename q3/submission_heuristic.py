@@ -11,11 +11,15 @@ does not claim a full Markov-perfect-equilibrium certificate.
 
 from __future__ import annotations
 
+import json
+import multiprocessing as mp
+import os
 from dataclasses import dataclass, replace
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import combinations_with_replacement, permutations
 from math import sqrt
 from statistics import NormalDist
-from time import perf_counter
+from time import perf_counter, time
 from typing import Sequence
 
 import numpy as np
@@ -75,6 +79,115 @@ class _AuditResult:
     day_steps: int
 
 
+_WORKER_CFG: Q3Config | None = None
+_WORKER_SCENARIOS: Sequence[Sequence[Weather]] = ()
+
+
+def _set_worker_context(
+    cfg: Q3Config, scenarios: Sequence[Sequence[Weather]]
+) -> None:
+    global _WORKER_CFG, _WORKER_SCENARIOS
+    _WORKER_CFG = cfg
+    _WORKER_SCENARIOS = scenarios
+
+
+def _simulate_profile_worker(
+    task: tuple[int, tuple[HeuristicPolicy, ...]],
+) -> tuple[int, np.ndarray, np.ndarray, int]:
+    task_id, profile = task
+    if _WORKER_CFG is None:
+        raise RuntimeError("heuristic worker context is not initialized")
+    episodes = len(_WORKER_SCENARIOS)
+    payoff = np.empty((episodes, _WORKER_CFG.n_players), dtype=np.float64)
+    success = np.empty((episodes, _WORKER_CFG.n_players), dtype=np.uint8)
+    day_steps = 0
+    for episode, weather in enumerate(_WORKER_SCENARIOS):
+        result = _simulate_profile(_WORKER_CFG, profile, weather)
+        payoff[episode] = result.payoff
+        success[episode] = result.success
+        day_steps += result.day_steps
+    return task_id, payoff, success, day_steps
+
+
+class _ProgressLog:
+    def __init__(self, budget_manager: BudgetManager | None, workers: int) -> None:
+        self.started = perf_counter()
+        self.budget_manager = budget_manager
+        self.workers = workers
+
+    def write(self, event: str, **fields: object) -> None:
+        payload = {
+            "timestamp": time(),
+            "elapsed_seconds": round(perf_counter() - self.started, 3),
+            "event": event,
+            "workers": self.workers,
+            "pid": os.getpid(),
+            "peak_rss_bytes": peak_rss_bytes(),
+        }
+        payload.update(fields)
+        print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
+
+
+def _parallel_profile_samples(
+    cfg: Q3Config,
+    profiles: Sequence[tuple[HeuristicPolicy, ...]],
+    scenarios: Sequence[Sequence[Weather]],
+    workers: int,
+    budget_manager: BudgetManager | None,
+    progress: _ProgressLog,
+    stage: str,
+) -> tuple[tuple[np.ndarray, np.ndarray, int], ...]:
+    if not profiles:
+        return ()
+    started = perf_counter()
+    results: list[tuple[np.ndarray, np.ndarray, int] | None] = [None] * len(profiles)
+    completed = 0
+
+    def record(
+        item: tuple[int, np.ndarray, np.ndarray, int]
+    ) -> None:
+        nonlocal completed
+        task_id, payoff, success, day_steps = item
+        results[task_id] = (payoff, success, day_steps)
+        completed += 1
+        if budget_manager is not None:
+            budget_manager.check(profiles=completed)
+        interval = max(1, min(25, len(profiles) // 20 or 1))
+        if completed == len(profiles) or completed % interval == 0:
+            elapsed = max(perf_counter() - started, 1e-9)
+            progress.write(
+                "stage_progress",
+                stage=stage,
+                completed=completed,
+                total=len(profiles),
+                fraction=completed / len(profiles),
+                profiles_per_second=completed / elapsed,
+                eta_seconds=(len(profiles) - completed) * elapsed / completed,
+            )
+
+    _set_worker_context(cfg, scenarios)
+    if workers <= 1 or "fork" not in mp.get_all_start_methods():
+        for task_id, profile in enumerate(profiles):
+            record(_simulate_profile_worker((task_id, profile)))
+    else:
+        context = mp.get_context("fork")
+        with ProcessPoolExecutor(
+            max_workers=min(workers, len(profiles)), mp_context=context
+        ) as executor:
+            futures = [
+                executor.submit(_simulate_profile_worker, (task_id, profile))
+                for task_id, profile in enumerate(profiles)
+            ]
+            try:
+                for future in as_completed(futures):
+                    record(future.result())
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+    return tuple(item for item in results if item is not None)
+
+
 class _TrainingGame:
     """Canonical-profile sample cache for an append-only symmetric library."""
 
@@ -83,32 +196,62 @@ class _TrainingGame:
         cfg: Q3Config,
         scenarios: Sequence[Sequence[Weather]],
         budget_manager: BudgetManager | None,
+        workers: int,
+        progress: _ProgressLog,
+        stage: str = "training",
     ) -> None:
         self.cfg = cfg
         self.scenarios = scenarios
         self.budget_manager = budget_manager
+        self.workers = workers
+        self.progress = progress
+        self.stage = stage
         self.samples: dict[tuple[int, ...], tuple[np.ndarray, np.ndarray]] = {}
         self.day_steps = 0
         self.profile_evaluations = 0
 
     def ensure(self, policies: Sequence[HeuristicPolicy]) -> None:
         count = len(policies)
-        episodes = len(self.scenarios)
-        for index in combinations_with_replacement(range(count), self.cfg.n_players):
-            if index in self.samples:
-                continue
-            if self.budget_manager is not None:
-                self.budget_manager.check(profiles=self.profile_evaluations)
-            profile = tuple(policies[action] for action in index)
-            payoff = np.empty((episodes, self.cfg.n_players), dtype=np.float64)
-            success = np.empty((episodes, self.cfg.n_players), dtype=np.uint8)
-            for episode, weather in enumerate(self.scenarios):
-                result = _simulate_profile(self.cfg, profile, weather)
-                payoff[episode] = result.payoff
-                success[episode] = result.success
-                self.day_steps += result.day_steps
+        missing = tuple(
+            index
+            for index in combinations_with_replacement(
+                range(count), self.cfg.n_players
+            )
+            if index not in self.samples
+        )
+        if not missing:
+            return
+        self.progress.write(
+            "stage_start",
+            stage=self.stage,
+            policies=count,
+            missing_profiles=len(missing),
+            cached_profiles=len(self.samples),
+            episodes=len(self.scenarios),
+        )
+        profiles = tuple(
+            tuple(policies[action] for action in index) for index in missing
+        )
+        samples = _parallel_profile_samples(
+            self.cfg,
+            profiles,
+            self.scenarios,
+            self.workers,
+            self.budget_manager,
+            self.progress,
+            self.stage,
+        )
+        for index, (payoff, success, day_steps) in zip(missing, samples):
             self.samples[index] = payoff, success
+            self.day_steps += day_steps
             self.profile_evaluations += 1
+        self.progress.write(
+            "stage_complete",
+            stage=self.stage,
+            policies=count,
+            cached_profiles=len(self.samples),
+            day_steps=self.day_steps,
+        )
 
     def profile_samples(
         self, profile: tuple[int, ...]
@@ -308,20 +451,38 @@ def _screen_policies(
     budget_manager: BudgetManager | None,
     profile_counter: list[int],
     day_counter: list[int],
+    workers: int,
+    progress: _ProgressLog,
+    stage: str,
 ) -> tuple[_ResponseEvaluation, ...]:
     evaluations: list[_ResponseEvaluation] = []
+    profiles = []
     for candidate in candidates:
-        if budget_manager is not None:
-            budget_manager.check(profiles=profile_counter[0])
         profile = list(current_profile)
         profile[player] = candidate
-        payoff = np.empty(len(scenarios), dtype=np.float64)
-        success = np.empty(len(scenarios), dtype=np.float64)
-        for episode, weather in enumerate(scenarios):
-            result = _simulate_profile(cfg, profile, weather)
-            payoff[episode] = result.payoff[player]
-            success[episode] = result.success[player]
-            day_counter[0] += result.day_steps
+        profiles.append(tuple(profile))
+    progress.write(
+        "response_batch_start",
+        stage=stage,
+        player=player + 1,
+        candidates=len(candidates),
+        episodes=len(scenarios),
+    )
+    samples = _parallel_profile_samples(
+        cfg,
+        profiles,
+        scenarios,
+        workers,
+        budget_manager,
+        progress,
+        stage,
+    )
+    for candidate, (profile_payoff, profile_success, day_steps) in zip(
+        candidates, samples
+    ):
+        payoff = profile_payoff[:, player]
+        success = profile_success[:, player]
+        day_counter[0] += day_steps
         profile_counter[0] += 1
         evaluations.append(
             _ResponseEvaluation(
@@ -356,6 +517,8 @@ def _response_candidates_for_player(
     round_index: int,
     profile_counter: list[int],
     day_counter: list[int],
+    workers: int,
+    progress: _ProgressLog,
 ) -> tuple[_ResponseEvaluation, ...]:
     current_profile = tuple(policies[index] for index in selection.profile)
     scenarios = _scenario_window(
@@ -411,6 +574,9 @@ def _response_candidates_for_player(
         training.budget_manager,
         profile_counter,
         day_counter,
+        workers,
+        progress,
+        f"response_round_{round_index + 1}_player_{player + 1}_base",
     )
     route_lookup = {route: index for index, route in enumerate(routes)}
     selected_routes: list[int] = []
@@ -469,6 +635,9 @@ def _response_candidates_for_player(
         training.budget_manager,
         profile_counter,
         day_counter,
+        workers,
+        progress,
+        f"response_round_{round_index + 1}_player_{player + 1}_refined",
     )
     return refined_evaluations[: options.response_audit_candidates]
 
@@ -531,17 +700,22 @@ def _audit_profile(
     scenarios: Sequence[Sequence[Weather]],
     confidence: float,
     budget_manager: BudgetManager | None,
+    workers: int,
+    progress: _ProgressLog,
+    replicate: int,
 ) -> _AuditResult:
     profile = tuple(policies[index] for index in selection.profile)
     episodes = len(scenarios)
-    baseline_payoff = np.empty((episodes, cfg.n_players), dtype=np.float64)
-    baseline_success = np.empty((episodes, cfg.n_players), dtype=np.uint8)
-    day_steps = 0
-    for episode, weather in enumerate(scenarios):
-        result = _simulate_profile(cfg, profile, weather)
-        baseline_payoff[episode] = result.payoff
-        baseline_success[episode] = result.success
-        day_steps += result.day_steps
+    baseline_sample = _parallel_profile_samples(
+        cfg,
+        (profile,),
+        scenarios,
+        workers,
+        budget_manager,
+        progress,
+        f"audit_{replicate}_baseline",
+    )[0]
+    baseline_payoff, baseline_success, day_steps = baseline_sample
 
     audit_sets: list[tuple[HeuristicPolicy, ...]] = []
     for player in range(cfg.n_players):
@@ -567,22 +741,33 @@ def _audit_profile(
             "lower": 0.0,
             "upper": 0.0,
         }
-        for candidate in candidates:
-            if _policy_key(candidate) == _policy_key(profile[player]):
-                continue
-            if budget_manager is not None:
-                budget_manager.check(profiles=profiles)
+        deviations = tuple(
+            candidate
+            for candidate in candidates
+            if _policy_key(candidate) != _policy_key(profile[player])
+        )
+        deviation_profiles = []
+        for candidate in deviations:
             deviating_profile = list(profile)
             deviating_profile[player] = candidate
-            difference = np.empty(episodes, dtype=np.float64)
-            candidate_success = 0
-            for episode, weather in enumerate(scenarios):
-                result = _simulate_profile(cfg, deviating_profile, weather)
-                difference[episode] = (
-                    result.payoff[player] - baseline_payoff[episode, player]
-                )
-                candidate_success += int(result.success[player] > 0.5)
-                day_steps += result.day_steps
+            deviation_profiles.append(tuple(deviating_profile))
+        deviation_samples = _parallel_profile_samples(
+            cfg,
+            deviation_profiles,
+            scenarios,
+            workers,
+            budget_manager,
+            progress,
+            f"audit_{replicate}_player_{player + 1}",
+        )
+        for candidate, (candidate_payoff, candidate_successes, steps) in zip(
+            deviations, deviation_samples
+        ):
+            difference = (
+                candidate_payoff[:, player] - baseline_payoff[:, player]
+            )
+            candidate_success = int(np.sum(candidate_successes[:, player]))
+            day_steps += steps
             profiles += 1
             mean = float(np.mean(difference))
             halfwidth = z * float(np.std(difference, ddof=1)) / sqrt(episodes)
@@ -741,17 +926,31 @@ def solve_submission_heuristic(
     *,
     options: HeuristicOptions,
     budget_manager: BudgetManager | None = None,
+    workers: int = 1,
 ) -> Q32SolveResult:
     """Train and independently audit a submission-scale empirical equilibrium."""
     started = perf_counter()
+    workers = max(1, workers)
+    progress = _ProgressLog(budget_manager, workers)
     policies = list(generate_heuristic_policies(config, options))
     try:
+        progress.write(
+            "solve_start",
+            config=config.name,
+            training_episodes=options.episodes,
+            audit_episodes=options.audit_episodes,
+            audit_replicates=options.audit_replicates,
+            initial_policies=len(policies),
+            max_policies=options.max_policies,
+        )
         for policy in policies:
             _validate_policy(config, policy)
         if budget_manager is not None:
             budget_manager.check()
         training_scenarios = _weather_scenarios(config, options)
-        training = _TrainingGame(config, training_scenarios, budget_manager)
+        training = _TrainingGame(
+            config, training_scenarios, budget_manager, workers, progress
+        )
         routes = enumerate_submission_routes(config, options.route_max_moves)
         if not routes:
             raise ValueError("submission route universe is empty")
@@ -787,6 +986,8 @@ def solve_submission_heuristic(
                     round_index,
                     response_profile_counter,
                     response_day_counter,
+                    workers,
+                    progress,
                 )
                 round_responses.append(responses)
                 audit_candidates[player].extend(responses)
@@ -831,6 +1032,19 @@ def solve_submission_heuristic(
                     ),
                 }
             )
+            progress.write(
+                "response_round_complete",
+                round=round_index + 1,
+                policy_count=len(policies),
+                equilibrium=selection.kind,
+                best_response_gain=tuple(
+                    responses[0].mean_gain if responses else 0.0
+                    for responses in round_responses
+                ),
+                additions=tuple(
+                    response.policy.name for response in selected_additions
+                ),
+            )
             if selected_additions:
                 policies.extend(response.policy for response in selected_additions)
                 stable_rounds = 0
@@ -853,6 +1067,7 @@ def solve_submission_heuristic(
             stats = {
                 "route_universe": len(routes),
                 "policy_count": len(policies),
+                "workers": workers,
                 "training_episodes": options.episodes,
                 "audit_episodes": options.audit_episodes,
                 "stability_episodes": options.stability_episodes,
@@ -905,6 +1120,8 @@ def solve_submission_heuristic(
                     options.response_rounds,
                     response_profile_counter,
                     response_day_counter,
+                    workers,
+                    progress,
                 )
             )
 
@@ -923,7 +1140,12 @@ def solve_submission_heuristic(
             )
             stability_scenarios = _weather_scenarios(config, stability_options)
             stability_game = _TrainingGame(
-                config, stability_scenarios, budget_manager
+                config,
+                stability_scenarios,
+                budget_manager,
+                workers,
+                progress,
+                stage=f"stability_{replicate + 1}",
             )
             stability_game.ensure(policies)
             stability_payoff, stability_success = stability_game.mean_tensors(
@@ -996,7 +1218,17 @@ def solve_submission_heuristic(
                     audit_scenarios,
                     options.confidence,
                     budget_manager,
+                    workers,
+                    progress,
+                    replicate + 1,
                 )
+            )
+            progress.write(
+                "audit_replicate_complete",
+                replicate=replicate + 1,
+                regret_mean=audit_runs[-1].regret_mean,
+                regret_upper=audit_runs[-1].regret_upper,
+                success_lower=audit_runs[-1].success_lower,
             )
         audit = _aggregate_audits(audit_runs)
         ready = (
@@ -1016,6 +1248,16 @@ def solve_submission_heuristic(
             if ready
             else "EMPIRICAL_EQ_NOT_READY"
         )
+        progress.write(
+            "solve_complete",
+            status=status,
+            policy_count=len(policies),
+            response_complete=response_complete,
+            stability_complete=stability_complete,
+            regret_mean=audit.regret_mean,
+            regret_upper=audit.regret_upper,
+            success_lower=audit.success_lower,
+        )
         representative_profile = tuple(
             policies[index] for index in selection.profile
         )
@@ -1030,6 +1272,7 @@ def solve_submission_heuristic(
             "route_universe": len(routes),
             "route_max_moves": options.route_max_moves,
             "policy_count": len(policies),
+            "workers": workers,
             "initial_policy_count": min(
                 options.initial_policies, options.max_policies
             ),
@@ -1120,4 +1363,13 @@ def solve_submission_heuristic(
             player_regret_upper=audit.regret_upper,
         )
     except BudgetExceeded as exc:
+        progress.write("solve_stopped", reason=str(exc), policy_count=len(policies))
         return _stopped_result(config, options, started, exc, policies)
+    except BaseException as exc:
+        progress.write(
+            "solve_failed",
+            error_type=type(exc).__name__,
+            reason=str(exc),
+            policy_count=len(policies),
+        )
+        raise

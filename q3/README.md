@@ -62,6 +62,7 @@ Run the submission-gated policy-response Q3.2 solver:
   --heuristic-audit-episodes 100000 \
   --heuristic-audit-replicates 3 \
   --heuristic-max-policies 32 \
+  --workers 16 \
   --wall-hours 8 --memory-gib 16 \
   --equilibrium pure-mixed --output q3/output/q3_2_submission
 ```
@@ -74,6 +75,12 @@ lower bounds and the 100/200-yuan regret gates pass.  It remains a broad
 policy-class result rather than a full-action Nash certificate.  See
 [`docs/Q3-2-Heuristic.md`](../docs/Q3-2-Heuristic.md) for the complete list of
 simplifications.
+
+On ordinary CPython 3.13 the heuristic simulation hot path uses multiple
+worker processes (up to 16 by default) rather than Python threads, so it is not
+serialized by the GIL. Progress is emitted as JSONL throughout training,
+response search, stability checks, and holdout audits; redirect stdout/stderr
+to `run.log` and use `tail -f` for live monitoring.
 
 Run the Q3.1 smoke solve or the official fifth level:
 

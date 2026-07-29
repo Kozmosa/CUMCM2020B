@@ -1617,6 +1617,7 @@ def solve_q3_2(
             options=heuristic_options,
             quality_target=quality_target,
             budget_manager=budget_manager,
+            workers=workers,
         )
     if backend not in {"exact", "adaptive"}:
         raise ValueError("backend must be 'exact', 'adaptive', or 'heuristic'")

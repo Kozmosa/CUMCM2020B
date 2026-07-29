@@ -308,11 +308,20 @@ full_action_regret_certified=false
   --heuristic-submission-success-lower 0.9999 \
   --equilibrium pure-mixed \
   --seed 20260728 \
+  --workers 16 \
   --wall-hours 8 --memory-gib 16 \
   --output q3/output/q3_2_submission
 ```
 
-这些参数也是 CLI 默认值。`--quality-regret 10` 属于完整 `adaptive` 后端，不作为 `heuristic` 的提交门槛。
+这些参数也是 CLI 默认值。普通 CPython 3.13 下，heuristic 使用多进程绕过 GIL，`--workers` 默认取 CPU 数与 16 的较小值；可以按机器核心数和内存调整。`--quality-regret 10` 属于完整 `adaptive` 后端，不作为 `heuristic` 的提交门槛。
+
+求解过程向标准输出持续写一行一个 JSON 的进度事件。后台运行时可直接执行：
+
+```bash
+tail -f q3/output/q3_2_submission/run.log
+```
+
+主要事件包括 `solve_start`、`stage_start`、`stage_progress`、`response_round_complete`、`audit_replicate_complete`、`solve_complete`、`solve_stopped` 和 `solve_failed`。`stage_progress` 提供已完成/总 profile 数、当前吞吐和阶段 ETA，因此不必等到最终 `result.json` 才能发现停滞、异常响应收益或资源问题。SIGTERM 会触发预算取消并写出 `SEARCH_STOPPED` 结果；heuristic 仍不提供跨进程恢复 checkpoint。
 
 ---
 
@@ -356,6 +365,8 @@ canonical profile C(34,3) = 5984
 追加式缓存只保存 5984 个 canonical profile 的训练样本。按 5000 天气样本估算，训练样本数组约 1.4 GiB，加上响应筛选、Python 对象和审计缓冲，16 GiB 内存预算充足。
 
 相对旧 `K=16, N=2000` 的约 8 分钟运行，正式训练预计为数小时；三组独立审计只计算最终 profile 和有限偏离，不构造完整 `32^3 × 100000` 张量。
+
+2026-07-29 在本机对缩小版第六关作同参数多进程基准：1/4/8/16 个 worker 分别耗时 138.2/41.9/23.7/14.5 秒，16 进程相对单进程加速约 9.5 倍。正式规模仍会受策略扩张轮数、进程间样本回传和内存带宽影响，因此日志中的阶段 ETA 比静态总耗时预测更可信。
 
 ---
 

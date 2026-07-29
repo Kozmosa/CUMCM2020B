@@ -34,11 +34,13 @@ def _gil_enabled() -> bool:
     return sys._is_gil_enabled() if hasattr(sys, "_is_gil_enabled") else True
 
 
-def _resolve_workers(requested: int | None) -> int:
+def _resolve_workers(requested: int | None, *, process_parallel: bool = False) -> int:
     if requested is not None:
         if requested <= 0:
             raise ValueError("workers must be positive")
         return requested
+    if process_parallel:
+        return min(16, os.cpu_count() or 1)
     if _gil_enabled():
         return 1
     return min(16, os.cpu_count() or 1)
@@ -104,7 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--workers",
         type=int,
         default=None,
-        help="successor workers (default: 16 without the GIL, otherwise 1)",
+        help=(
+            "parallel workers (heuristic: up to 16 processes; exact/adaptive: "
+            "16 without the GIL, otherwise 1)"
+        ),
     )
     parser.add_argument(
         "--bound-threads",
@@ -186,10 +191,10 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("heuristic backend solves the initial finite policy game only")
         if args.checkpoint or args.resume:
             parser.error("heuristic backend does not use exact-state checkpoints")
-        if args.workers not in (None, 1):
-            parser.error("heuristic backend currently uses one Python worker")
     try:
-        workers = _resolve_workers(args.workers)
+        workers = _resolve_workers(
+            args.workers, process_parallel=args.backend == "heuristic"
+        )
     except ValueError as exc:
         parser.error(str(exc))
     if args.bound_threads is not None and args.bound_threads <= 0:

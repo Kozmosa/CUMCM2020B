@@ -270,6 +270,7 @@ class HeuristicBackendTests(unittest.TestCase):
             "heuristic",
             quality_target=1e-9,
             heuristic_options=options,
+            workers=2,
         )
         repeated = solve_q3_2_heuristic(
             cfg, options=options, policies=(success, failure)

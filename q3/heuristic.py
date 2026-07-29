@@ -1168,6 +1168,7 @@ def solve_q3_2_heuristic(
     policies: Sequence[HeuristicPolicy] | None = None,
     quality_target: float = 10.0,
     budget_manager: BudgetManager | None = None,
+    workers: int = 1,
 ) -> Q32SolveResult:
     """Solve Q3.2 with submission gates or an explicit fixed policy library."""
     options = options or HeuristicOptions()
@@ -1185,4 +1186,5 @@ def solve_q3_2_heuristic(
         config,
         options=options,
         budget_manager=budget_manager,
+        workers=workers,
     )
