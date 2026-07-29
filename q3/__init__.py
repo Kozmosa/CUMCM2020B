@@ -27,6 +27,7 @@ from .heuristic import (
     simulate_heuristic_profile,
     solve_q3_2_heuristic,
 )
+from .submission_heuristic import enumerate_submission_routes
 from .stochastic_dp import (
     ExactQ3Solver,
     ResourceLimitExceeded,
@@ -62,6 +63,7 @@ __all__ = [
     "level5",
     "level6",
     "generate_heuristic_policies",
+    "enumerate_submission_routes",
     "simulate_heuristic_profile",
     "tiny_level6",
     "solve_q3_1",

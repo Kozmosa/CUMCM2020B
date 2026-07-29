@@ -4,7 +4,7 @@
 >
 > 数学模型见 [`Solution/Q3-2.md`](./Solution/Q3-2.md)。
 >
-> 当前实现提供三个后端：`exact` 保留完整无损枚举；`adaptive` 只限制购买候选集，但会对固定候选均衡执行完整单边动作扫描，并以向上舍入的资源上界给出未展开偏离的 regret 上界；`heuristic` 将完整反馈策略空间替换为有限参数化策略库，用共同天气样本求经验博弈。前两者不量化状态、资源、现金或天气，第三个后端保留精确联合转移规则，但不提供完整动作空间认证。详细简化边界见 [`Q3-2-Heuristic.md`](./Q3-2-Heuristic.md)。
+> 当前实现提供三个后端：`exact` 保留完整无损枚举；`adaptive` 只限制购买候选集，但会对固定候选均衡执行完整单边动作扫描，并以向上舍入的资源上界给出未展开偏离的 regret 上界；`heuristic` 在覆盖全部 12 步以内简单路线的参数化策略类中执行策略响应扩张，并用三组独立 holdout 样本进行成功率与 regret 审计。前两者不量化状态、资源、现金或天气，第三个后端保留精确联合转移规则，但不提供完整动作空间认证。详细提交门槛见 [`Q3-2-Heuristic.md`](./Q3-2-Heuristic.md)。
 
 ---
 
@@ -16,7 +16,7 @@ Q3.2 建模为有限时域完全信息随机博弈。第 $t$ 天开始时，所�
 
 完整后端结果严格区分 `EXACT_SELECTED`、`CERTIFIED_PURE`、`APPROX_PURE`、`APPROX_MIXED` 和 `SEARCH_STOPPED`。只有根状态每名玩家的完整偏离收益上界不超过质量门槛时，才通过正式验收；默认门槛为 10 元。
 
-`heuristic` 后端另行报告 `HEURISTIC_PURE` 或 `HEURISTIC_MIXED`。它求解的是“整套路线、购买和挖矿策略”构成的有限正规形经验博弈；其 `value_lower/value_upper` 是 Monte Carlo 统计区间，regret 只覆盖生成策略库内的单边换策略，不能用于上述 10 元完整认证门槛。无论有限库是否扫描完毕，原问题层面的 `selection_complete` 都保持为 `false`。
+`heuristic` 后端只在提交质量门槛全部通过时报告 `SUBMISSION_READY_EMPIRICAL_EQ`；否则报告 `EMPIRICAL_EQ_NOT_READY`。默认门槛为每名玩家成功率的单侧 95% 下界不低于 99.99%、最大偏离收益均值不超过 100 元、Bonferroni 修正的单侧 95% 上界不超过 200 元，并要求连续两个响应筛选窗口无超过 50 元的库外策略，以及两个额外训练种子的角色组合保持一致。其 `value_lower/value_upper` 和 regret 来自训练后独立生成的 holdout 天气，仍不能替代上述 10 元完整动作认证。原问题层面的 `selection_complete` 始终保持为 `false`。
 
 玩家 $i$ 的随机路径支付沿用最新 Q2：
 
@@ -1149,7 +1149,7 @@ Q3.1 和 Q3.2 可以共享状态、联合回放、交互统计、定点金额和
 
 - `Q3Config.weather_sequence` 与第五关已知天气；
 - Q3.1 联合回放、完整对手状态最佳反应、Gauss--Seidel、策略级 double-oracle 和混合兜底；
-- Q3.2 `exact|adaptive|heuristic` 三后端：前两者提供紧凑数组购买动作、确定性候选、完整纯偏离扫描、资源感知向上舍入上界、精确购买格点 max-pyramid、Numba/CUDA 双实现和 NashConv 混合兜底；`heuristic` 提供有限路线/购买/挖矿策略库、共同天气样本、玩家置换约简和经验纯/混合均衡；
+- Q3.2 `exact|adaptive|heuristic` 三后端：前两者提供紧凑数组购买动作、确定性候选、完整纯偏离扫描、资源感知向上舍入上界、精确购买格点 max-pyramid、Numba/CUDA 双实现和 NashConv 混合兜底；`heuristic` 提供 804 条短简单路线全集、购买/村庄/挖矿参数化策略、追加式 canonical-profile 缓存、策略响应扩张和三组独立 holdout 审计；
 - 对称轨道约简、候选全集覆盖认证和经完整最佳反应验证的纯均衡提前路径；
 - `PolicyEntry`、`SolveReport` 和明确的均衡状态；
 - v2 目录检查点（manifest、逐日 NumPy 层、阶段元数据）以及 v1 pickle 迁移读取；
@@ -1159,4 +1159,4 @@ Q3.1 和 Q3.2 可以共享状态、联合回放、交互统计、定点金额和
 
 完整第六关 `adaptive` 正式实验已在 2026-07-29 按人工请求安全暂停。停止时已运行 38,095 秒（约 10.58 小时），保留 5,131,301 个非终止状态、直接结算 138,876,780 个终止叶，并扫描约 $1.804\times10^{11}$ 次完整单边偏离上界；峰值 RSS 约 7.07 GiB，v2 检查点约 1.8 GiB。实验尚未返回根状态策略或有限 regret，因此状态正确记录为 `SEARCH_STOPPED`，不能再按早期前沿线性外推声称“约 5 小时完成”。本地检查点和恢复命令保留在 `q3/output/level6-formal/`，需要完整认证时可继续运行。
 
-竞赛级替代路径 `heuristic` 的 `K=16, N=50` probe 实际模拟 816 个对称 profile、433,606 次逐日联合转移，耗时约 12.6 秒、峰值 RSS 约 166 MiB；默认 `N=500` 预计为数分钟。其规则回放仍是精确的，但统计支付、有限库 regret 与完整认证的区别必须按 [`Q3-2-Heuristic.md`](./Q3-2-Heuristic.md) 报告。
+旧固定 `K=16, N=2000` 经验纯均衡已被参考路线证明存在显著库外偏离，因此不再作为竞赛终点。新的提交级默认值为最多 32 个响应生成策略、5000 条训练天气，以及三组各 100000 条独立审计天气。第六关 12 步内共有 804 条简单路线；`K=32` 时只需缓存 5984 个 canonical profile。最终只有状态 `SUBMISSION_READY_EMPIRICAL_EQ` 可以进入论文结论，所有 `EMPIRICAL_EQ_NOT_READY` 结果都必须继续保留明确 gap。

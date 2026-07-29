@@ -1,13 +1,15 @@
-"""Finite-policy Monte Carlo backend for a contest-scale Q3.2 solution.
+"""Policy-response Monte Carlo backend for a submission-scale Q3.2 solution.
 
 The exact and adaptive backends solve a much stronger state-by-state dynamic
 game.  This module keeps the lossless Q3 transition rules, but replaces the
-full feedback-strategy space with a small deterministic library of route,
-purchase, and mining policies.  A common set of weather scenarios estimates
-the resulting finite normal-form game.
+full feedback-strategy space with parameterized route, purchase, and mining
+policies.  A response search expands an initial finite game, then an independent
+weather holdout audits the selected profile against both the final library and
+the strongest generated out-of-library deviations.
 
-The reported regret is therefore only against deviations inside the generated
-policy library.  It is a statistical estimate, not a full-action certificate.
+The reported regret is still an empirical policy-class result rather than a
+full-action certificate.  Submission readiness requires explicit success and
+regret gates; a finite-library equilibrium alone is not a terminal result.
 """
 
 from __future__ import annotations
@@ -52,14 +54,34 @@ from .transition import (
 
 @dataclass(frozen=True, slots=True)
 class HeuristicOptions:
-    """Controls the finite policy library and Monte Carlo empirical game."""
+    """Controls the policy-response training game and independent audit."""
 
-    episodes: int = 500
+    episodes: int = 5_000
+    audit_episodes: int = 100_000
+    audit_replicates: int = 3
+    stability_episodes: int = 500
+    stability_replicates: int = 2
     confidence: float = 0.95
-    max_policies: int = 16
+    max_policies: int = 32
+    initial_policies: int = 16
     route_variants_per_family: int = 2
     safety_factors: tuple[float, ...] = (1.0, 1.75, 2.5)
     mine_day_choices: tuple[int, ...] = (2, 4)
+    route_max_moves: int = 12
+    response_screening_episodes: int = 128
+    response_route_candidates: int = 24
+    response_audit_candidates: int = 16
+    response_additions_per_round: int = 3
+    response_rounds: int = 8
+    response_stable_rounds: int = 2
+    response_training_regret: float = 50.0
+    response_safety_factors: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5)
+    response_mine_days: tuple[int, ...] = (0, 1, 2, 3, 4)
+    inventory_anchors: tuple[tuple[int, int], ...] = ((200, 200),)
+    submission_mean_regret: float = 100.0
+    submission_upper_regret: float = 200.0
+    submission_success_lower: float = 0.9999
+    submission_mode: bool = True
     equilibrium: str = "pure-mixed"
     pure_tolerance: float = 5.0
     seed: int = 20260728
@@ -69,16 +91,54 @@ class HeuristicOptions:
     def __post_init__(self) -> None:
         if self.episodes < 2:
             raise ValueError("heuristic episodes must be at least two")
+        if self.audit_episodes < 2:
+            raise ValueError("heuristic audit_episodes must be at least two")
+        if self.audit_replicates <= 0:
+            raise ValueError("heuristic audit_replicates must be positive")
+        if self.stability_episodes < 2:
+            raise ValueError("heuristic stability_episodes must be at least two")
+        if self.stability_replicates <= 0:
+            raise ValueError("heuristic stability_replicates must be positive")
         if not 0.0 < self.confidence < 1.0:
             raise ValueError("heuristic confidence must be in (0, 1)")
         if self.max_policies <= 0 or self.max_policies > 32:
             raise ValueError("heuristic max_policies must be in 1..32")
+        if self.initial_policies <= 0:
+            raise ValueError("heuristic initial_policies must be positive")
         if self.route_variants_per_family <= 0:
             raise ValueError("route_variants_per_family must be positive")
         if not self.safety_factors or any(value <= 0.0 for value in self.safety_factors):
             raise ValueError("safety_factors must be positive")
         if any(value < 0 for value in self.mine_day_choices):
             raise ValueError("mine_day_choices cannot be negative")
+        if self.route_max_moves <= 0:
+            raise ValueError("route_max_moves must be positive")
+        for value, label in (
+            (self.response_screening_episodes, "response_screening_episodes"),
+            (self.response_route_candidates, "response_route_candidates"),
+            (self.response_audit_candidates, "response_audit_candidates"),
+            (self.response_additions_per_round, "response_additions_per_round"),
+            (self.response_rounds, "response_rounds"),
+            (self.response_stable_rounds, "response_stable_rounds"),
+        ):
+            if value <= 0:
+                raise ValueError(f"{label} must be positive")
+        if self.response_training_regret < 0.0:
+            raise ValueError("response_training_regret cannot be negative")
+        if not self.response_safety_factors or any(
+            value <= 0.0 for value in self.response_safety_factors
+        ):
+            raise ValueError("response_safety_factors must be positive")
+        if not self.response_mine_days or any(
+            value < 0 for value in self.response_mine_days
+        ):
+            raise ValueError("response_mine_days must be non-negative")
+        if any(min(anchor) < 0 for anchor in self.inventory_anchors):
+            raise ValueError("inventory_anchors cannot contain negatives")
+        if min(self.submission_mean_regret, self.submission_upper_regret) < 0.0:
+            raise ValueError("submission regret targets cannot be negative")
+        if not 0.0 < self.submission_success_lower <= 1.0:
+            raise ValueError("submission_success_lower must be in (0, 1]")
         if self.equilibrium not in {"pure", "pure-mixed"}:
             raise ValueError("heuristic equilibrium must be pure or pure-mixed")
         if self.pure_tolerance < 0.0:
@@ -100,6 +160,8 @@ class HeuristicPolicy:
     village_water_target: int = 0
     village_food_target: int = 0
     safety_factor: float = 1.0
+    yield_when_crowded: bool = False
+    mine_only_alone: bool = False
 
     def initial_action(self) -> Action:
         return Action(
@@ -412,7 +474,8 @@ def generate_heuristic_policies(
     selected: list[HeuristicPolicy] = []
     seen: set[tuple[object, ...]] = set()
     positions = [0] * len(by_family)
-    while len(selected) < options.max_policies:
+    initial_limit = min(options.initial_policies, options.max_policies)
+    while len(selected) < initial_limit:
         added = False
         for family_index, candidates in enumerate(by_family):
             while positions[family_index] < len(candidates):
@@ -432,7 +495,7 @@ def generate_heuristic_policies(
                 selected.append(policy)
                 added = True
                 break
-            if len(selected) >= options.max_policies:
+            if len(selected) >= initial_limit:
                 break
         if not added:
             break
@@ -538,19 +601,29 @@ def _heuristic_action(
     if player.status is not Status.ACTIVE:
         return INACTIVE_ACTION
     buy_water, buy_food = _purchase_toward_target(cfg, player, policy)
-    if weather == "sandstorm":
-        kind = (
-            ActionKind.MINE
-            if player.position in cfg.mines and mined_days < policy.mine_days
-            else ActionKind.STAY
-        )
-        destination = 0
-    elif player.position in cfg.mines and mined_days < policy.mine_days:
+    crowded = any(
+        opponent != player_index
+        and opponent_state.status is Status.ACTIVE
+        and opponent_state.position == player.position
+        for opponent, opponent_state in enumerate(state)
+    )
+    should_mine = (
+        player.position in cfg.mines
+        and mined_days < policy.mine_days
+        and not (policy.mine_only_alone and crowded)
+    )
+    if should_mine:
         kind = ActionKind.MINE
+        destination = 0
+    elif weather == "sandstorm":
+        kind = ActionKind.STAY
         destination = 0
     else:
         destination = _route_next(policy, player.position) or 0
         kind = ActionKind.MOVE if destination else ActionKind.STAY
+        if kind is ActionKind.MOVE and policy.yield_when_crowded and crowded:
+            kind = ActionKind.STAY
+            destination = 0
 
     return Action(
         kind,
@@ -864,6 +937,8 @@ def _policy_payload(policy: HeuristicPolicy) -> dict[str, object]:
             "food": policy.village_food_target,
         },
         "safety_factor": policy.safety_factor,
+        "yield_when_crowded": policy.yield_when_crowded,
+        "mine_only_alone": policy.mine_only_alone,
     }
 
 
@@ -897,7 +972,7 @@ def _replay_payload(
     )
 
 
-def solve_q3_2_heuristic(
+def _solve_fixed_policy_game(
     config: Q3Config,
     *,
     options: HeuristicOptions | None = None,
@@ -905,7 +980,7 @@ def solve_q3_2_heuristic(
     quality_target: float = 10.0,
     budget_manager: BudgetManager | None = None,
 ) -> Q32SolveResult:
-    """Solve the finite empirical policy game without claiming full regret."""
+    """Retain the original fixed-library solver for explicit benchmark calls."""
     options = options or HeuristicOptions()
     started = perf_counter()
     policy_library = (
@@ -1084,3 +1159,30 @@ def solve_q3_2_heuristic(
             player_regret_lower=tuple(0.0 for _ in range(config.n_players)),
             player_regret_upper=tuple(float("inf") for _ in range(config.n_players)),
         )
+
+
+def solve_q3_2_heuristic(
+    config: Q3Config,
+    *,
+    options: HeuristicOptions | None = None,
+    policies: Sequence[HeuristicPolicy] | None = None,
+    quality_target: float = 10.0,
+    budget_manager: BudgetManager | None = None,
+) -> Q32SolveResult:
+    """Solve Q3.2 with submission gates or an explicit fixed policy library."""
+    options = options or HeuristicOptions()
+    if policies is not None or not options.submission_mode:
+        return _solve_fixed_policy_game(
+            config,
+            options=options,
+            policies=policies,
+            quality_target=quality_target,
+            budget_manager=budget_manager,
+        )
+    from .submission_heuristic import solve_submission_heuristic
+
+    return solve_submission_heuristic(
+        config,
+        options=options,
+        budget_manager=budget_manager,
+    )

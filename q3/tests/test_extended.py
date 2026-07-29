@@ -30,6 +30,7 @@ from q3.heuristic import (
     simulate_heuristic_profile,
     solve_q3_2_heuristic,
 )
+from q3.submission_heuristic import enumerate_submission_routes
 from q3.model import Action, ActionKind, PlayerState, Status, terminal_state_value
 from q3.open_loop import (
     OpenLoopStrategy,
@@ -152,6 +153,11 @@ class PublicTypeTests(unittest.TestCase):
 
 
 class HeuristicBackendTests(unittest.TestCase):
+    def test_submission_route_universe_covers_all_short_level6_paths(self) -> None:
+        routes = enumerate_submission_routes(level6(), 12)
+        self.assertEqual(len(routes), 804)
+        self.assertIn((1, 6, 11, 16, 17, 18, 23, 24, 25), routes)
+
     def test_generated_level6_library_is_bounded_valid_and_route_diverse(self) -> None:
         cfg = level6()
         options = HeuristicOptions(
@@ -195,6 +201,29 @@ class HeuristicBackendTests(unittest.TestCase):
         self.assertEqual(result.replay[0].actions[0].kind, ActionKind.MOVE)
         self.assertEqual(result.replay[0].state[0].status, Status.FINISHED)
 
+    def test_response_policy_can_yield_to_avoid_shared_start(self) -> None:
+        cfg = replace(
+            one_step_config(n_players=1),
+            n_players=2,
+            weight_limit=24,
+            init_cash=100,
+        )
+        yielding = HeuristicPolicy(
+            name="yielding",
+            family="test",
+            route=(1, 2),
+            initial_water=8,
+            initial_food=8,
+            yield_when_crowded=True,
+        )
+        moving = replace(yielding, name="moving", yield_when_crowded=False)
+        result = simulate_heuristic_profile(
+            cfg, (yielding, moving), ("sunny",)
+        )
+        self.assertEqual(result.replay[0].actions[0].kind, ActionKind.STAY)
+        self.assertEqual(result.replay[0].actions[1].kind, ActionKind.MOVE)
+        self.assertEqual(result.success, (0.0, 1.0))
+
     def test_heuristic_solver_selects_best_policy_deterministically(self) -> None:
         cfg = one_step_config(n_players=1)
         success = HeuristicPolicy(
@@ -213,7 +242,23 @@ class HeuristicBackendTests(unittest.TestCase):
         )
         options = HeuristicOptions(
             episodes=8,
+            audit_episodes=16,
+            audit_replicates=1,
+            stability_episodes=4,
+            stability_replicates=1,
             max_policies=2,
+            initial_policies=2,
+            route_max_moves=1,
+            response_screening_episodes=4,
+            response_route_candidates=1,
+            response_audit_candidates=2,
+            response_additions_per_round=1,
+            response_rounds=2,
+            response_stable_rounds=2,
+            response_training_regret=0.0,
+            submission_mean_regret=0.0,
+            submission_upper_regret=0.0,
+            submission_success_lower=0.8,
             equilibrium="pure",
             seed=7,
         )
@@ -240,18 +285,68 @@ class HeuristicBackendTests(unittest.TestCase):
         self.assertEqual(first.value_lower, repeated.value_lower)
         self.assertEqual(first.policy, repeated.policy)
         self.assertEqual(second.backend, "heuristic")
-        self.assertEqual(second.stats["regret_scope"], "generated_finite_policy_library")
+        self.assertEqual(second.status, "SUBMISSION_READY_EMPIRICAL_EQ")
+        self.assertEqual(
+            second.stats["regret_scope"],
+            "broad_parameterized_policy_response_search",
+        )
+        self.assertTrue(second.stats["submission_quality_met"])
 
     def test_heuristic_budget_stop_has_no_checkpoint_claim(self) -> None:
         budget = BudgetManager(wall_seconds=60.0)
         budget.cancel()
         report = solve_q3_2_heuristic(
             one_step_config(n_players=1),
-            options=HeuristicOptions(episodes=4, max_policies=2),
+            options=HeuristicOptions(
+                episodes=4,
+                audit_episodes=4,
+                audit_replicates=1,
+                stability_episodes=2,
+                stability_replicates=1,
+                max_policies=2,
+                initial_policies=2,
+                route_max_moves=1,
+            ),
             budget_manager=budget,
         )
         self.assertEqual(report.status, "SEARCH_STOPPED")
         self.assertIsNone(report.checkpoint)
+
+    def test_submission_gate_rejects_profitable_response_at_policy_cap(self) -> None:
+        cfg = replace(
+            one_step_config(n_players=1),
+            p_weather={"sunny": 0.9, "hot": 0.1},
+            water_consume={"sunny": 1, "hot": 3},
+            food_consume={"sunny": 1, "hot": 3},
+            weight_limit=12,
+            weather_sequence=None,
+        )
+        report = solve_q3_2_heuristic(
+            cfg,
+            options=HeuristicOptions(
+                episodes=100,
+                audit_episodes=20,
+                audit_replicates=1,
+                stability_episodes=20,
+                stability_replicates=1,
+                max_policies=1,
+                initial_policies=1,
+                route_max_moves=1,
+                response_screening_episodes=100,
+                response_route_candidates=1,
+                response_audit_candidates=2,
+                response_additions_per_round=1,
+                response_rounds=1,
+                response_stable_rounds=1,
+                response_training_regret=1.0,
+                submission_success_lower=0.5,
+                seed=11,
+            ),
+        )
+        self.assertEqual(report.status, "EMPIRICAL_EQ_NOT_READY")
+        self.assertTrue(report.stats["policy_cap_reached"])
+        self.assertFalse(report.stats["response_complete"])
+        self.assertFalse(report.stats["submission_quality_met"])
 
 
 class OpenLoopTests(unittest.TestCase):

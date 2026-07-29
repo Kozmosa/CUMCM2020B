@@ -26,8 +26,9 @@ This directory now contains the shared exact rule core plus Q3.1 and Q3.2 solver
 - an exact purchase-lattice max-pyramid oracle with CPU/Numba and optional CUDA screening;
 - symmetric-stage reduction and fully verified best-response fixed-point shortcuts;
 - finite-support mixed fallback through deterministic NashConv minimization.
-- a contest-scale finite-policy Monte Carlo backend with exact joint rule replay,
-  common weather samples, and player-symmetry reduction.
+- a submission-gated policy-response Monte Carlo backend with exact joint rule
+  replay, complete short-route screening, independent holdout audits, and
+  player-symmetry reduction.
 
 Small stage games use a dense payoff tensor.  Larger games automatically switch
 to a bounded-memory exact best-response scan.  A proven optimistic-reachability
@@ -52,19 +53,25 @@ Run the safe three-player smoke solve:
 uv run python -m q3.solve_q3_2 --backend adaptive --mode smoke
 ```
 
-Run the contest-scale finite-policy Q3.2 solver:
+Run the submission-gated policy-response Q3.2 solver:
 
 ```bash
 .venv/bin/python -m q3.solve_q3_2 \
   --backend heuristic --mode level6-initial \
-  --heuristic-episodes 500 --heuristic-max-policies 16 \
-  --equilibrium pure-mixed --output q3/output/q3_2_heuristic
+  --heuristic-episodes 5000 \
+  --heuristic-audit-episodes 100000 \
+  --heuristic-audit-replicates 3 \
+  --heuristic-max-policies 32 \
+  --wall-hours 8 --memory-gib 16 \
+  --equilibrium pure-mixed --output q3/output/q3_2_submission
 ```
 
-This backend keeps the exact multiplayer transition and payoff rules, but
-searches a finite library of route, purchase, village-restocking, and mining
-policies.  Its confidence intervals and regret apply only to that generated
-library; it does not claim a full-action Nash certificate.  See
+This backend keeps the exact multiplayer transition and payoff rules.  It
+screens all 804 simple level-6 routes of at most 12 moves, expands a cached
+empirical game with profitable policy responses, and audits the final profile
+on three disjoint weather holdouts.  It exits successfully only when success
+lower bounds and the 100/200-yuan regret gates pass.  It remains a broad
+policy-class result rather than a full-action Nash certificate.  See
 [`docs/Q3-2-Heuristic.md`](../docs/Q3-2-Heuristic.md) for the complete list of
 simplifications.
 
@@ -208,5 +215,6 @@ The short probe did not predict the later state distribution accurately: the
 reached the root certificate.  Completion time for the full adaptive backend
 is therefore unresolved and remains gated by the reported root regret upper
 bound, not by elapsed time alone.  For a contest-scale answer, use the
-finite-policy heuristic backend and preserve its explicitly weaker result
-semantics.
+submission-gated heuristic backend and accept only
+`SUBMISSION_READY_EMPIRICAL_EQ`; intermediate empirical equilibria are not a
+paper-ready conclusion.

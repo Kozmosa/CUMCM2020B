@@ -135,10 +135,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bound-pruning-slack", type=float, default=1e-6)
     parser.add_argument("--record-pruning-certificates", action="store_true")
     parser.add_argument("--max-pruning-certificates", type=int, default=1_000)
-    parser.add_argument("--heuristic-episodes", type=int, default=500)
+    parser.add_argument("--heuristic-episodes", type=int, default=5_000)
+    parser.add_argument("--heuristic-audit-episodes", type=int, default=100_000)
+    parser.add_argument("--heuristic-audit-replicates", type=int, default=3)
+    parser.add_argument("--heuristic-stability-episodes", type=int, default=500)
+    parser.add_argument("--heuristic-stability-replicates", type=int, default=2)
     parser.add_argument("--heuristic-confidence", type=float, default=0.95)
-    parser.add_argument("--heuristic-max-policies", type=int, default=16)
+    parser.add_argument("--heuristic-max-policies", type=int, default=32)
+    parser.add_argument("--heuristic-initial-policies", type=int, default=16)
     parser.add_argument("--heuristic-route-variants", type=int, default=2)
+    parser.add_argument("--heuristic-route-max-moves", type=int, default=12)
+    parser.add_argument("--heuristic-response-screening-episodes", type=int, default=128)
+    parser.add_argument("--heuristic-response-route-candidates", type=int, default=24)
+    parser.add_argument("--heuristic-response-audit-candidates", type=int, default=16)
+    parser.add_argument("--heuristic-response-additions", type=int, default=3)
+    parser.add_argument("--heuristic-response-rounds", type=int, default=8)
+    parser.add_argument("--heuristic-response-stable-rounds", type=int, default=2)
+    parser.add_argument("--heuristic-response-training-regret", type=float, default=50.0)
+    parser.add_argument("--heuristic-submission-mean-regret", type=float, default=100.0)
+    parser.add_argument("--heuristic-submission-upper-regret", type=float, default=200.0)
+    parser.add_argument("--heuristic-submission-success-lower", type=float, default=0.9999)
     parser.add_argument("--heuristic-pure-tolerance", type=float, default=5.0)
     parser.add_argument("--heuristic-mixed-starts", type=int, default=4)
     parser.add_argument("--heuristic-mixed-iterations", type=int, default=500)
@@ -227,9 +243,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         heuristic_options = HeuristicOptions(
             episodes=args.heuristic_episodes,
+            audit_episodes=args.heuristic_audit_episodes,
+            audit_replicates=args.heuristic_audit_replicates,
+            stability_episodes=args.heuristic_stability_episodes,
+            stability_replicates=args.heuristic_stability_replicates,
             confidence=args.heuristic_confidence,
             max_policies=args.heuristic_max_policies,
+            initial_policies=args.heuristic_initial_policies,
             route_variants_per_family=args.heuristic_route_variants,
+            route_max_moves=args.heuristic_route_max_moves,
+            response_screening_episodes=args.heuristic_response_screening_episodes,
+            response_route_candidates=args.heuristic_response_route_candidates,
+            response_audit_candidates=args.heuristic_response_audit_candidates,
+            response_additions_per_round=args.heuristic_response_additions,
+            response_rounds=args.heuristic_response_rounds,
+            response_stable_rounds=args.heuristic_response_stable_rounds,
+            response_training_regret=args.heuristic_response_training_regret,
+            submission_mean_regret=args.heuristic_submission_mean_regret,
+            submission_upper_regret=args.heuristic_submission_upper_regret,
+            submission_success_lower=args.heuristic_submission_success_lower,
             equilibrium=args.equilibrium,
             pure_tolerance=args.heuristic_pure_tolerance,
             seed=args.seed,
@@ -303,8 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         successful = {
             "EXACT_SELECTED",
             "CERTIFIED_PURE",
-            "HEURISTIC_PURE",
-            "HEURISTIC_MIXED",
+            "SUBMISSION_READY_EMPIRICAL_EQ",
         }
         return 0 if report.status in successful else 2
 
