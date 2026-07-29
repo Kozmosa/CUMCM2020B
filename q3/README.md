@@ -26,6 +26,8 @@ This directory now contains the shared exact rule core plus Q3.1 and Q3.2 solver
 - an exact purchase-lattice max-pyramid oracle with CPU/Numba and optional CUDA screening;
 - symmetric-stage reduction and fully verified best-response fixed-point shortcuts;
 - finite-support mixed fallback through deterministic NashConv minimization.
+- a contest-scale finite-policy Monte Carlo backend with exact joint rule replay,
+  common weather samples, and player-symmetry reduction.
 
 Small stage games use a dense payoff tensor.  Larger games automatically switch
 to a bounded-memory exact best-response scan.  A proven optimistic-reachability
@@ -49,6 +51,22 @@ Run the safe three-player smoke solve:
 ```bash
 uv run python -m q3.solve_q3_2 --backend adaptive --mode smoke
 ```
+
+Run the contest-scale finite-policy Q3.2 solver:
+
+```bash
+.venv/bin/python -m q3.solve_q3_2 \
+  --backend heuristic --mode level6-initial \
+  --heuristic-episodes 500 --heuristic-max-policies 16 \
+  --equilibrium pure-mixed --output q3/output/q3_2_heuristic
+```
+
+This backend keeps the exact multiplayer transition and payoff rules, but
+searches a finite library of route, purchase, village-restocking, and mining
+policies.  Its confidence intervals and regret apply only to that generated
+library; it does not claim a full-action Nash certificate.  See
+[`docs/Q3-2-Heuristic.md`](../docs/Q3-2-Heuristic.md) for the complete list of
+simplifications.
 
 Run the Q3.1 smoke solve or the official fifth level:
 
@@ -115,7 +133,8 @@ more workers on ordinary CPython usually slows recursive state evaluation;
 Numba and NumPy still accelerate the large numeric batches internally.
 
 Attempting the full initial-purchase game is allowed only through explicit
-limits.  The formal adaptive command is:
+limits.  The formal adaptive command remains available for research-grade
+full-action certification:
 
 ```bash
 uv run python -m q3.solve_q3_2 \
@@ -131,6 +150,13 @@ uv run python -m q3.solve_q3_2 \
 
 Exceeding a budget returns `SEARCH_STOPPED` with an explicit unresolved gap;
 it never labels a finite candidate set as an exact solution.
+
+The first formal adaptive experiment was safely stopped after 38,095 seconds
+(10.58 hours).  It retained 5,131,301 non-terminal states, settled 138,876,780
+terminal leaves, scanned about 1.804e11 unilateral-deviation upper bounds,
+peaked near 7.07 GiB RSS, and wrote an approximately 1.8 GiB resumable v2
+checkpoint under `q3/output/level6-formal/`.  It had not yet produced a root
+policy or finite regret gap, so the result remains `SEARCH_STOPPED`.
 
 Numba is included in the UV environment and activates the fused transition
 kernel and the day-layer resource-bound DP automatically.  Python successor
@@ -177,8 +203,10 @@ On the reference 128-core/A800 host, using one Python worker:
   Long-run v2 storage should be budgeted at roughly 0.2--0.3 KiB per retained
   non-terminal state plus policy metadata.
 
-The probe does not establish the total number of non-terminal states required
-for the root certificate.  A linear extrapolation of the previous 24-hour
-budget is now roughly five hours, but later village distributions may change
-both the state and full-deviation rates.  The formal result is therefore still
-gated by the reported root regret upper bound, not by elapsed time alone.
+The short probe did not predict the later state distribution accurately: the
+10.58-hour formal run was still expanding the recursive game and had not
+reached the root certificate.  Completion time for the full adaptive backend
+is therefore unresolved and remains gated by the reported root regret upper
+bound, not by elapsed time alone.  For a contest-scale answer, use the
+finite-policy heuristic backend and preserve its explicitly weaker result
+semantics.

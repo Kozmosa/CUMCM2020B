@@ -1,4 +1,4 @@
-"""Command-line entry point for the exact and adaptive Q3.2 backends."""
+"""Command-line entry point for the exact, adaptive, and heuristic Q3.2 backends."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from time import perf_counter
 
 from .adaptive import AdaptiveOptions, AdaptiveQ3Solver, solve_q3_2
 from .data import level6, tiny_level6
+from .heuristic import HeuristicOptions
 from .interaction import NUMBA_AVAILABLE
 from .model import PlayerState, Status
 from .purchase_oracle import CUDA_PURCHASE_AVAILABLE, NUMBA_PURCHASE_AVAILABLE
@@ -68,7 +69,9 @@ def _git_commit() -> str | None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CUMCM 2020B Q3.2 solver")
-    parser.add_argument("--backend", choices=("exact", "adaptive"), default="adaptive")
+    parser.add_argument(
+        "--backend", choices=("exact", "adaptive", "heuristic"), default="adaptive"
+    )
     parser.add_argument(
         "--mode",
         choices=("smoke", "level6-state", "level6-initial"),
@@ -132,6 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bound-pruning-slack", type=float, default=1e-6)
     parser.add_argument("--record-pruning-certificates", action="store_true")
     parser.add_argument("--max-pruning-certificates", type=int, default=1_000)
+    parser.add_argument("--heuristic-episodes", type=int, default=500)
+    parser.add_argument("--heuristic-confidence", type=float, default=0.95)
+    parser.add_argument("--heuristic-max-policies", type=int, default=16)
+    parser.add_argument("--heuristic-route-variants", type=int, default=2)
+    parser.add_argument("--heuristic-pure-tolerance", type=float, default=5.0)
+    parser.add_argument("--heuristic-mixed-starts", type=int, default=4)
+    parser.add_argument("--heuristic-mixed-iterations", type=int, default=500)
     parser.add_argument("--output", type=Path)
     return parser
 
@@ -155,6 +165,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     cli_args = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(cli_args)
+    if args.backend == "heuristic":
+        if args.mode == "level6-state":
+            parser.error("heuristic backend solves the initial finite policy game only")
+        if args.checkpoint or args.resume:
+            parser.error("heuristic backend does not use exact-state checkpoints")
+        if args.workers not in (None, 1):
+            parser.error("heuristic backend currently uses one Python worker")
     try:
         workers = _resolve_workers(args.workers)
     except ValueError as exc:
@@ -207,6 +224,20 @@ def main(argv: list[str] | None = None) -> int:
         purchase_cuda_min_actions=args.purchase_cuda_min_actions,
         purchase_parallel_min_actions=args.purchase_parallel_min_actions,
     )
+    try:
+        heuristic_options = HeuristicOptions(
+            episodes=args.heuristic_episodes,
+            confidence=args.heuristic_confidence,
+            max_policies=args.heuristic_max_policies,
+            route_variants_per_family=args.heuristic_route_variants,
+            equilibrium=args.equilibrium,
+            pure_tolerance=args.heuristic_pure_tolerance,
+            seed=args.seed,
+            mixed_starts=args.heuristic_mixed_starts,
+            mixed_max_iterations=args.heuristic_mixed_iterations,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     memory_soft_gib = min(args.memory_gib, 240.0)
     budget = BudgetManager(
         wall_seconds=args.wall_hours * 3600.0,
@@ -228,13 +259,14 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, handle_termination)
 
-    if args.mode == "level6-initial":
+    if args.mode == "level6-initial" or args.backend == "heuristic":
         report = solve_q3_2(
             cfg,
             args.backend,
             limits,
             args.quality_regret,
             adaptive_options=options,
+            heuristic_options=heuristic_options,
             budget_manager=budget,
             checkpoint=args.checkpoint,
             resume=args.resume,
@@ -268,7 +300,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         _write_output(args.output, payload)
         print(json.dumps(json_safe(payload), ensure_ascii=False, indent=2, allow_nan=False))
-        return 0 if report.status in {"EXACT_SELECTED", "CERTIFIED_PURE"} else 2
+        successful = {
+            "EXACT_SELECTED",
+            "CERTIFIED_PURE",
+            "HEURISTIC_PURE",
+            "HEURISTIC_MIXED",
+        }
+        return 0 if report.status in successful else 2
 
     if args.mode == "smoke":
         day = 1

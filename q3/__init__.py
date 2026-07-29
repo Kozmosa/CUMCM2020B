@@ -20,6 +20,13 @@ from .open_loop import (
 from .reports import PolicyEntry, Q32SolveResult, SolveReport
 from .stage_game import NoPureEquilibrium
 from .adaptive import AdaptiveOptions, AdaptiveQ3Solver, solve_q3_2
+from .heuristic import (
+    HeuristicOptions,
+    HeuristicPolicy,
+    generate_heuristic_policies,
+    simulate_heuristic_profile,
+    solve_q3_2_heuristic,
+)
 from .stochastic_dp import (
     ExactQ3Solver,
     ResourceLimitExceeded,
@@ -35,6 +42,8 @@ __all__ = [
     "BestResponseResult",
     "EquilibriumOptions",
     "ExactQ3Solver",
+    "HeuristicOptions",
+    "HeuristicPolicy",
     "JointReplayResult",
     "JointState",
     "NoPureEquilibrium",
@@ -52,7 +61,10 @@ __all__ = [
     "Status",
     "level5",
     "level6",
+    "generate_heuristic_policies",
+    "simulate_heuristic_profile",
     "tiny_level6",
     "solve_q3_1",
     "solve_q3_2",
+    "solve_q3_2_heuristic",
 ]

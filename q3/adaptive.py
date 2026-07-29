@@ -9,7 +9,7 @@ from itertools import permutations, product
 from math import prod
 from pathlib import Path
 from time import perf_counter
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
 
@@ -63,6 +63,9 @@ from .transition import (
     apply_unilateral_transition_arrays,
     apply_unilateral_transition_encoded_arrays,
 )
+
+if TYPE_CHECKING:
+    from .heuristic import HeuristicOptions
 
 
 @dataclass(frozen=True)
@@ -1591,6 +1594,7 @@ def solve_q3_2(
     quality_target: float = 10.0,
     *,
     adaptive_options: AdaptiveOptions | None = None,
+    heuristic_options: HeuristicOptions | None = None,
     budget_manager: BudgetManager | None = None,
     checkpoint: str | None = None,
     resume: bool = False,
@@ -1603,8 +1607,19 @@ def solve_q3_2(
     record_pruning_certificates: bool = False,
     max_pruning_certificates: int = 10_000,
 ) -> Q32SolveResult:
+    if backend == "heuristic":
+        if checkpoint is not None or resume:
+            raise ValueError("heuristic backend does not use exact-state checkpoints")
+        from .heuristic import solve_q3_2_heuristic
+
+        return solve_q3_2_heuristic(
+            config,
+            options=heuristic_options,
+            quality_target=quality_target,
+            budget_manager=budget_manager,
+        )
     if backend not in {"exact", "adaptive"}:
-        raise ValueError("backend must be 'exact' or 'adaptive'")
+        raise ValueError("backend must be 'exact', 'adaptive', or 'heuristic'")
     solver_class = ExactQ3Solver if backend == "exact" else AdaptiveQ3Solver
     kwargs = dict(
         limits=limits,

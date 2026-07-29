@@ -23,6 +23,13 @@ from q3.adaptive import (
     solve_q3_2,
 )
 from q3.data import Q3Config, level5, level6, tiny_level6
+from q3.heuristic import (
+    HeuristicOptions,
+    HeuristicPolicy,
+    generate_heuristic_policies,
+    simulate_heuristic_profile,
+    solve_q3_2_heuristic,
+)
 from q3.model import Action, ActionKind, PlayerState, Status, terminal_state_value
 from q3.open_loop import (
     OpenLoopStrategy,
@@ -142,6 +149,109 @@ class PublicTypeTests(unittest.TestCase):
         manager.started -= 1.0
         with self.assertRaises(BudgetExceeded):
             manager.check()
+
+
+class HeuristicBackendTests(unittest.TestCase):
+    def test_generated_level6_library_is_bounded_valid_and_route_diverse(self) -> None:
+        cfg = level6()
+        options = HeuristicOptions(
+            episodes=2,
+            max_policies=16,
+            route_variants_per_family=2,
+        )
+        policies = generate_heuristic_policies(cfg, options)
+        self.assertLessEqual(len(policies), options.max_policies)
+        self.assertTrue(any(policy.route[1] == 2 for policy in policies))
+        self.assertTrue(any(policy.route[1] == 6 for policy in policies))
+        self.assertTrue(any(policy.mine_days > 0 for policy in policies))
+        self.assertEqual(
+            {policy.mine_days for policy in policies if policy.mine_days > 0},
+            {2, 4},
+        )
+        self.assertTrue(
+            any(policy.village_water_target > 0 for policy in policies)
+        )
+        for policy in policies:
+            self.assertEqual(policy.route[0], cfg.start)
+            self.assertEqual(policy.route[-1], cfg.end)
+            self.assertLessEqual(
+                cfg.water_weight * policy.initial_water
+                + cfg.food_weight * policy.initial_food,
+                cfg.weight_limit,
+            )
+
+    def test_heuristic_replay_uses_exact_transition_and_terminal_refund(self) -> None:
+        cfg = one_step_config(n_players=1)
+        policy = HeuristicPolicy(
+            name="direct",
+            family="test",
+            route=(1, 2),
+            initial_water=3,
+            initial_food=3,
+        )
+        result = simulate_heuristic_profile(cfg, (policy,), ("sunny",))
+        self.assertEqual(result.success, (1.0,))
+        self.assertEqual(result.payoff, (15.0,))
+        self.assertEqual(result.replay[0].actions[0].kind, ActionKind.MOVE)
+        self.assertEqual(result.replay[0].state[0].status, Status.FINISHED)
+
+    def test_heuristic_solver_selects_best_policy_deterministically(self) -> None:
+        cfg = one_step_config(n_players=1)
+        success = HeuristicPolicy(
+            name="success",
+            family="test",
+            route=(1, 2),
+            initial_water=2,
+            initial_food=2,
+        )
+        failure = HeuristicPolicy(
+            name="failure",
+            family="test",
+            route=(1, 2),
+            initial_water=1,
+            initial_food=1,
+        )
+        options = HeuristicOptions(
+            episodes=8,
+            max_policies=2,
+            equilibrium="pure",
+            seed=7,
+        )
+        first = solve_q3_2_heuristic(
+            cfg, options=options, policies=(success, failure)
+        )
+        second = solve_q3_2(
+            cfg,
+            "heuristic",
+            quality_target=1e-9,
+            heuristic_options=options,
+        )
+        repeated = solve_q3_2_heuristic(
+            cfg, options=options, policies=(success, failure)
+        )
+        self.assertEqual(first.status, "HEURISTIC_PURE")
+        self.assertEqual(first.success, (1.0,))
+        self.assertEqual(first.value_lower, (16.0,))
+        self.assertEqual(first.value_upper, (16.0,))
+        self.assertEqual(first.max_regret_upper, 0.0)
+        self.assertEqual(
+            first.policy["representative_profile"], ("success",)
+        )
+        self.assertEqual(first.value_lower, repeated.value_lower)
+        self.assertEqual(first.policy, repeated.policy)
+        self.assertEqual(second.backend, "heuristic")
+        self.assertEqual(second.stats["regret_scope"], "generated_finite_policy_library")
+
+    def test_heuristic_budget_stop_has_no_checkpoint_claim(self) -> None:
+        budget = BudgetManager(wall_seconds=60.0)
+        budget.cancel()
+        report = solve_q3_2_heuristic(
+            one_step_config(n_players=1),
+            options=HeuristicOptions(episodes=4, max_policies=2),
+            budget_manager=budget,
+        )
+        self.assertEqual(report.status, "SEARCH_STOPPED")
+        self.assertIsNone(report.checkpoint)
 
 
 class OpenLoopTests(unittest.TestCase):
