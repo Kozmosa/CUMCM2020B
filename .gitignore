@@ -14,6 +14,7 @@ __pycache__/
 profile_output/
 q3/output/level6-formal/checkpoint/
 q3/output/level6-formal/run.log
+q3/output/q3_2_submission/run.log
 
 # Editors
 .vscode/

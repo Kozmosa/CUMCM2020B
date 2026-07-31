@@ -76,6 +76,12 @@ policy-class result rather than a full-action Nash certificate.  See
 [`docs/Q3-2-Heuristic.md`](../docs/Q3-2-Heuristic.md) for the complete list of
 simplifications.
 
+The currently recorded baseline and policy-response outputs are stored in
+[`q3_2_heuristic/result.json`](output/q3_2_heuristic/result.json) and
+[`q3_2_submission/result.json`](output/q3_2_submission/result.json).  The
+paper-facing interpretation and tables are collected in
+[`docs/Q3-2-Result.md`](../docs/Q3-2-Result.md).
+
 On ordinary CPython 3.13 the heuristic simulation hot path uses multiple
 worker processes (up to 16 by default) rather than Python threads, so it is not
 serialized by the GIL. Progress is emitted as JSONL throughout training,

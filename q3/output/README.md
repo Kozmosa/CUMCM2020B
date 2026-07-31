@@ -16,10 +16,16 @@
 - `q3_2_level6_probe/result.json`：第六关根状态短预算探针。完成 216 个缓存状态后因墙钟预算停止；尚无根策略，故 `max_regret_upper = Infinity`。
 - `q3_2_level6_probe/resumed.json`：从同一 v2 目录检查点恢复，`checkpoint_loads = 1`，证明恢复链路有效；仍因短预算停止。
 
+## 第六关经验近似结果
+
+- `q3_2_heuristic/result.json`：固定 16 策略、2000 条共同天气样本的基线结果，状态为 `HEURISTIC_PURE`。该结果只在原有限策略库内零经验 regret，未执行宽路线库外审计。
+- `q3_2_submission/result.json`：覆盖 804 条 12 步以内简单路线的策略响应结果。最终库包含 29 个策略，使用 5000 条训练天气和三组各 100000 条独立审计天气；审计期望支付为 8018.19、7762.56、6359.93 元，最大经验偏离均值为 1306.76 元，状态为 `EMPIRICAL_EQ_NOT_READY`。
+- 两份结果的论文表格、策略解释和准确结论范围见 [`docs/Q3-2-Result.md`](../../docs/Q3-2-Result.md)。
+
 ## 第六关正式计算
 
-- `level6-formal/`：2026-07-28 23:55 CST 启动的 24 小时正式运行，使用普通 CPython 3.13、一个 Python successor worker、64 个资源上界线程和精确购买格点 max-pyramid。
-- checkpoint 与运行日志属于持续更新的本地恢复数据，已从 Git 排除；计算完成后的 `result.json` 不受忽略规则影响，将作为正式结果提交。
-- 2026-07-29 00:12 CST 的第 7 个原子 checkpoint 已完成 7,000,451 次状态评价，其中 6,766,990 次为直接终止结算；保留 233,461 个非终止状态，累计认证约 111.07 亿个上界偏离 profile，峰值 RSS 约 639 MiB。
+- `level6-formal/`：完整 `adaptive` 正式实验已在运行约 10.58 小时后按人工请求安全停止，状态为 `SEARCH_STOPPED`。
+- 停止时完成 144,008,081 次状态评价，其中 138,876,780 次为直接终止结算；保留 5,131,301 个非终止状态，累计扫描约 $1.804\times10^{11}$ 个完整单边偏离上界，峰值 RSS 约 7.07 GiB。
+- 约 1.8 GiB 的 checkpoint、运行日志和停止结果继续作为本地恢复数据保存，不随经验近似结果上传。
 
 正式运行命令见 [q3/README.md](../README.md)。第五关以三名玩家完整最佳反应 regret 为 0 通过纯均衡认证。第六关只有结果状态为 `EXACT_SELECTED`，或根状态 `CERTIFIED_PURE` 且 `max_regret_upper <= 10` 元时，才通过正式质量门槛。

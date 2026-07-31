@@ -1,0 +1,1178 @@
+{
+  "status": "HEURISTIC_PURE",
+  "value_lower": [
+    -1759.5152758928507,
+    1833.0186756109283,
+    7364.276118731644
+  ],
+  "value_upper": [
+    5554.345275892851,
+    6631.108824389072,
+    7375.938881268356
+  ],
+  "success": [
+    0.993,
+    0.997,
+    1.0
+  ],
+  "max_regret_lower": 0.0,
+  "max_regret_upper": 4726.675814549293,
+  "selection_complete": false,
+  "policy": {
+    "scope": "generated_finite_policy_library",
+    "equilibrium": "pure",
+    "selection_complete_within_library": true,
+    "players": [
+      {
+        "player": 1,
+        "support": [
+          {
+            "policy": "mine18-r1-m2-s2.5",
+            "probability": 1.0
+          }
+        ]
+      },
+      {
+        "player": 2,
+        "support": [
+          {
+            "policy": "village14-mine18-r1-m2-s2.5",
+            "probability": 1.0
+          }
+        ]
+      },
+      {
+        "player": 3,
+        "support": [
+          {
+            "policy": "direct-r2-m0-s2.5",
+            "probability": 1.0
+          }
+        ]
+      }
+    ],
+    "library": [
+      {
+        "name": "direct-r1-m0-s1",
+        "family": "direct",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 100,
+          "food": 109
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "village14-r1-m0-s1",
+        "family": "village14",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 38,
+          "food": 41
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "mine18-r1-m2-s1",
+        "family": "mine18",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 137,
+          "food": 149
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "village14-mine18-r1-m2-s1",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 99,
+          "food": 108
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "direct-r2-m0-s1",
+        "family": "direct",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 100,
+          "food": 109
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "village14-r2-m0-s1",
+        "family": "village14",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 38,
+          "food": 41
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "mine18-r2-m2-s1",
+        "family": "mine18",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 137,
+          "food": 149
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "village14-mine18-r2-m2-s1",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 99,
+          "food": 108
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "direct-r1-m0-s2.5",
+        "family": "direct",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5
+      },
+      {
+        "name": "village14-r1-m0-s2.5",
+        "family": "village14",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5
+      },
+      {
+        "name": "mine18-r1-m2-s2.5",
+        "family": "mine18",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5
+      },
+      {
+        "name": "village14-mine18-r1-m2-s2.5",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 157,
+          "food": 171
+        },
+        "safety_factor": 2.5
+      },
+      {
+        "name": "direct-r2-m0-s2.5",
+        "family": "direct",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5
+      },
+      {
+        "name": "village14-r2-m0-s2.5",
+        "family": "village14",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5
+      },
+      {
+        "name": "mine18-r1-m4-s1",
+        "family": "mine18",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 173,
+          "food": 188
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0
+      },
+      {
+        "name": "village14-mine18-r1-m4-s1",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 136,
+          "food": 147
+        },
+        "safety_factor": 1.0
+      }
+    ],
+    "representative_profile": [
+      "mine18-r1-m2-s2.5",
+      "village14-mine18-r1-m2-s2.5",
+      "direct-r2-m0-s2.5"
+    ],
+    "representative_weather": [
+      "hot",
+      "sunny",
+      "sunny",
+      "sandstorm",
+      "sunny",
+      "sunny",
+      "hot",
+      "sunny",
+      "sunny",
+      "sunny",
+      "sandstorm",
+      "sandstorm",
+      "sandstorm",
+      "sandstorm",
+      "sunny",
+      "hot",
+      "hot",
+      "sunny",
+      "hot",
+      "hot",
+      "hot",
+      "sunny",
+      "sandstorm",
+      "sunny",
+      "sunny",
+      "sunny",
+      "hot",
+      "hot",
+      "hot",
+      "hot"
+    ],
+    "representative_value": [
+      8792.5,
+      7277.5,
+      7487.5
+    ],
+    "representative_success": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "representative_replay": [
+      {
+        "day": 1,
+        "weather": "hot",
+        "actions": [
+          "move:2",
+          "move:2",
+          "move:6"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 2,
+            "water": 195,
+            "food": 216,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 2,
+            "water": 120,
+            "food": 134,
+            "cash": 7520.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 6,
+            "water": 213,
+            "food": 234,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 2,
+        "weather": "sunny",
+        "actions": [
+          "move:3",
+          "move:3",
+          "move:7"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 3,
+            "water": 183,
+            "food": 200,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 3,
+            "water": 108,
+            "food": 118,
+            "cash": 7520.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 7,
+            "water": 207,
+            "food": 226,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 3,
+        "weather": "sunny",
+        "actions": [
+          "move:8",
+          "move:4",
+          "move:8"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 8,
+            "water": 177,
+            "food": 192,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 4,
+            "water": 102,
+            "food": 110,
+            "cash": 7520.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 8,
+            "water": 201,
+            "food": 218,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 4,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "stay"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 8,
+            "water": 167,
+            "food": 182,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 4,
+            "water": 92,
+            "food": 100,
+            "cash": 7520.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 8,
+            "water": 191,
+            "food": 208,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 5,
+        "weather": "sunny",
+        "actions": [
+          "move:13",
+          "move:9",
+          "move:9"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 13,
+            "water": 161,
+            "food": 174,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 9,
+            "water": 86,
+            "food": 92,
+            "cash": 7520.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 9,
+            "water": 185,
+            "food": 200,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 6,
+        "weather": "sunny",
+        "actions": [
+          "move:18",
+          "move:14",
+          "move:10"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 155,
+            "food": 166,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 14,
+            "water": 80,
+            "food": 84,
+            "cash": 7520.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 10,
+            "water": 179,
+            "food": 192,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 7,
+        "weather": "hot",
+        "actions": [
+          "mine",
+          "move:13+W77/F87",
+          "move:15"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 128,
+            "food": 139,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 13,
+            "water": 139,
+            "food": 153,
+            "cash": 5010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 15,
+            "water": 161,
+            "food": 174,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 8,
+        "weather": "sunny",
+        "actions": [
+          "mine",
+          "move:18",
+          "move:20"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 119,
+            "food": 127,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 133,
+            "food": 145,
+            "cash": 5010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 155,
+            "food": 166,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 9,
+        "weather": "sunny",
+        "actions": [
+          "move:19",
+          "mine",
+          "move:25"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 19,
+            "water": 113,
+            "food": 119,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 124,
+            "food": 133,
+            "cash": 6010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 10,
+        "weather": "sunny",
+        "actions": [
+          "move:20",
+          "mine",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 107,
+            "food": 111,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 115,
+            "food": 121,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 11,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 97,
+            "food": 101,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 105,
+            "food": 111,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 12,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 87,
+            "food": 91,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 95,
+            "food": 101,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 13,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 77,
+            "food": 81,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 85,
+            "food": 91,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 14,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 67,
+            "food": 71,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 75,
+            "food": 81,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 15,
+        "weather": "sunny",
+        "actions": [
+          "move:25",
+          "move:19",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 8792.5
+          },
+          {
+            "status": "ACTIVE",
+            "position": 19,
+            "water": 69,
+            "food": 73,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 16,
+        "weather": "hot",
+        "actions": [
+          "inactive",
+          "move:20",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 8792.5
+          },
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 51,
+            "food": 55,
+            "cash": 7010.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      },
+      {
+        "day": 17,
+        "weather": "hot",
+        "actions": [
+          "inactive",
+          "move:25",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 8792.5
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7277.5
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7487.5
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "canonical_profiles_simulated": 816,
+    "joint_profiles_filled": 4096,
+    "simulated_day_steps": 17079964,
+    "policy_count": 16,
+    "episodes_per_profile": 2000,
+    "weather_scenarios": 2000,
+    "confidence": 0.95,
+    "pure_tolerance": 5.0,
+    "empirical_pure_equilibria": 6,
+    "finite_library_pure_equilibrium_found": true,
+    "empirical_value_mean": [
+      1897.415,
+      4232.06375,
+      7370.1075
+    ],
+    "empirical_success_mean": [
+      0.993,
+      0.997,
+      1.0
+    ],
+    "empirical_policy_regret_mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "empirical_policy_regret_interval_mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "regret_scope": "generated_finite_policy_library",
+    "value_bounds": "normal_approximation_confidence_interval",
+    "exact_joint_transition_rules": true,
+    "full_action_regret_certified": false,
+    "empirical_quality_target_met": false,
+    "peak_rss_bytes": 558706688,
+    "elapsed_seconds": 473.5057226791978
+  },
+  "checkpoint": null,
+  "backend": "heuristic",
+  "player_regret_lower": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "player_regret_upper": [
+    1349.5557379255856,
+    4726.675814549293,
+    0.0
+  ],
+  "elapsed_seconds": 473.50770296156406,
+  "config": {
+    "name": "level6",
+    "failure_penalty": 1000000,
+    "p_weather": {
+      "sunny": 0.5,
+      "hot": 0.4,
+      "sandstorm": 0.1
+    }
+  },
+  "git_commit": "42c738240f9db019e17ea764ebfc9754716a6cea",
+  "seed": 20260728,
+  "workers": 1,
+  "gil_enabled": true,
+  "numba_available": true,
+  "purchase_numba_available": true,
+  "purchase_cuda_available": true,
+  "resume_command": null
+}
