@@ -64,6 +64,7 @@ class HeuristicOptions:
     confidence: float = 0.95
     max_policies: int = 32
     initial_policies: int = 16
+    warm_start: str | None = None
     route_variants_per_family: int = 2
     safety_factors: tuple[float, ...] = (1.0, 1.75, 2.5)
     mine_day_choices: tuple[int, ...] = (2, 4)
@@ -101,8 +102,8 @@ class HeuristicOptions:
             raise ValueError("heuristic stability_replicates must be positive")
         if not 0.0 < self.confidence < 1.0:
             raise ValueError("heuristic confidence must be in (0, 1)")
-        if self.max_policies <= 0 or self.max_policies > 32:
-            raise ValueError("heuristic max_policies must be in 1..32")
+        if self.max_policies <= 0 or self.max_policies > 64:
+            raise ValueError("heuristic max_policies must be in 1..64")
         if self.initial_policies <= 0:
             raise ValueError("heuristic initial_policies must be positive")
         if self.route_variants_per_family <= 0:

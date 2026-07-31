@@ -14,10 +14,12 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import os
+import re
 from dataclasses import dataclass, replace
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import combinations_with_replacement, permutations
 from math import sqrt
+from pathlib import Path
 from statistics import NormalDist
 from time import perf_counter, time
 from typing import Sequence
@@ -392,6 +394,118 @@ def _deduplicate_policies(
             seen.add(key)
             output.append(policy)
     return tuple(output)
+
+
+def _policy_from_payload(payload: object) -> HeuristicPolicy:
+    if not isinstance(payload, dict):
+        raise ValueError("warm-start policy must be a JSON object")
+    initial = payload.get("initial_purchase")
+    village = payload.get("village_target")
+    if not isinstance(initial, dict) or not isinstance(village, dict):
+        raise ValueError("warm-start policy is missing purchase fields")
+    route = payload.get("route")
+    if not isinstance(route, (list, tuple)):
+        raise ValueError("warm-start policy route must be an array")
+    return HeuristicPolicy(
+        name=str(payload["name"]),
+        family=str(payload["family"]),
+        route=tuple(int(node) for node in route),
+        initial_water=int(initial["water"]),
+        initial_food=int(initial["food"]),
+        mine_days=int(payload.get("mine_days", 0)),
+        village_water_target=int(village.get("water", 0)),
+        village_food_target=int(village.get("food", 0)),
+        safety_factor=float(payload.get("safety_factor", 1.0)),
+        yield_when_crowded=bool(payload.get("yield_when_crowded", False)),
+        mine_only_alone=bool(payload.get("mine_only_alone", False)),
+    )
+
+
+_RESPONSE_NAME = re.compile(
+    r"^response-r(?P<route>\d+)-m(?P<mine>\d+)-s(?P<safety>[0-9.]+)"
+    r"(?:-w(?P<water>\d+)-f(?P<food>\d+))?"
+    r"-y(?P<yield>[01])-a(?P<alone>[01])$"
+)
+
+
+def _response_policy_from_name(
+    cfg: Q3Config,
+    routes: Sequence[tuple[int, ...]],
+    name: str,
+) -> HeuristicPolicy | None:
+    match = _RESPONSE_NAME.fullmatch(name)
+    if match is None:
+        return None
+    route_index = int(match.group("route"))
+    if route_index >= len(routes):
+        raise ValueError(f"warm-start response route index is out of range: {name}")
+    kwargs = {
+        "yield_when_crowded": match.group("yield") == "1",
+        "mine_only_alone": match.group("alone") == "1",
+    }
+    anchor_water = match.group("water")
+    if anchor_water is not None:
+        return _anchored_policy(
+            cfg,
+            routes[route_index],
+            route_index,
+            int(match.group("mine")),
+            (int(anchor_water), int(match.group("food"))),
+            float(match.group("safety")),
+            **kwargs,
+        )
+    return _route_policy(
+        cfg,
+        routes[route_index],
+        route_index,
+        int(match.group("mine")),
+        float(match.group("safety")),
+        **kwargs,
+    )
+
+
+def _load_warm_start(
+    cfg: Q3Config,
+    routes: Sequence[tuple[int, ...]],
+    path: str,
+) -> tuple[tuple[HeuristicPolicy, ...], dict[str, int]]:
+    source = Path(path)
+    if source.is_dir():
+        source = source / "result.json"
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    policy_section = payload.get("policy", {})
+    if not isinstance(policy_section, dict):
+        raise ValueError("warm-start result has no policy object")
+    library_payload = policy_section.get("library", ())
+    if not isinstance(library_payload, (list, tuple)):
+        raise ValueError("warm-start policy library must be an array")
+    policies = [_policy_from_payload(item) for item in library_payload]
+    by_name = {policy.name: policy for policy in policies}
+
+    recovered_audit = 0
+    stats = payload.get("stats", {})
+    deviations = stats.get("audit_best_deviations", ()) if isinstance(stats, dict) else ()
+    if isinstance(deviations, (list, tuple)):
+        for deviation in deviations:
+            if not isinstance(deviation, dict):
+                continue
+            name = deviation.get("policy")
+            gain = float(deviation.get("mean_gain", 0.0))
+            if not isinstance(name, str) or gain <= 0.0:
+                continue
+            policy = by_name.get(name) or _response_policy_from_name(cfg, routes, name)
+            if policy is not None and _policy_key(policy) not in {
+                _policy_key(existing) for existing in policies
+            }:
+                policies.append(policy)
+                by_name[policy.name] = policy
+                recovered_audit += 1
+    for policy in policies:
+        _validate_policy(cfg, policy)
+    return _deduplicate_policies(policies), {
+        "library": len(library_payload),
+        "audit_deviations_added": recovered_audit,
+    }
 
 
 def _select_training_equilibrium(
@@ -932,7 +1046,22 @@ def solve_submission_heuristic(
     started = perf_counter()
     workers = max(1, workers)
     progress = _ProgressLog(budget_manager, workers)
-    policies = list(generate_heuristic_policies(config, options))
+    routes = enumerate_submission_routes(config, options.route_max_moves)
+    if not routes:
+        raise ValueError("submission route universe is empty")
+    base_policies = generate_heuristic_policies(config, options)
+    warm_start_stats = {"library": 0, "audit_deviations_added": 0}
+    warm_policies: tuple[HeuristicPolicy, ...] = ()
+    if options.warm_start is not None:
+        warm_policies, warm_start_stats = _load_warm_start(
+            config, routes, options.warm_start
+        )
+    policies = list(_deduplicate_policies((*base_policies, *warm_policies)))
+    if len(policies) > options.max_policies:
+        raise ValueError(
+            f"warm start contains {len(policies)} distinct policies, exceeding "
+            f"max_policies={options.max_policies}"
+        )
     try:
         progress.write(
             "solve_start",
@@ -942,6 +1071,11 @@ def solve_submission_heuristic(
             audit_replicates=options.audit_replicates,
             initial_policies=len(policies),
             max_policies=options.max_policies,
+            warm_start=options.warm_start,
+            warm_start_library=warm_start_stats["library"],
+            warm_start_audit_deviations=warm_start_stats[
+                "audit_deviations_added"
+            ],
         )
         for policy in policies:
             _validate_policy(config, policy)
@@ -951,9 +1085,6 @@ def solve_submission_heuristic(
         training = _TrainingGame(
             config, training_scenarios, budget_manager, workers, progress
         )
-        routes = enumerate_submission_routes(config, options.route_max_moves)
-        if not routes:
-            raise ValueError("submission route universe is empty")
         response_profile_counter = [0]
         response_day_counter = [0]
         response_history: list[dict[str, object]] = []
@@ -967,7 +1098,13 @@ def solve_submission_heuristic(
         mean_payoff: np.ndarray | None = None
         mean_success: np.ndarray | None = None
 
-        for round_index in range(options.response_rounds):
+        # One additional no-addition probe closes the response loop after the
+        # configured stability rounds.  In older runs this probe was used only
+        # for the audit candidate set, so a newly found profitable deviation
+        # could not change the selected profile.
+        required_stable_rounds = options.response_stable_rounds + 1
+        max_response_attempts = options.response_rounds + required_stable_rounds
+        for round_index in range(max_response_attempts):
             training.ensure(policies)
             mean_payoff, mean_success = training.mean_tensors(policies)
             selection = _select_training_equilibrium(
@@ -1053,7 +1190,7 @@ def solve_submission_heuristic(
                 policy_cap_reached = True
                 break
             stable_rounds += 1
-            if stable_rounds >= options.response_stable_rounds:
+            if stable_rounds >= required_stable_rounds:
                 response_complete = True
                 break
 
@@ -1101,28 +1238,6 @@ def solve_submission_heuristic(
                 player_regret_upper=tuple(
                     float("inf") for _ in range(config.n_players)
                 ),
-            )
-
-        # Search once more against the final selected profile.  Responses found
-        # against intermediate profiles remain useful audit candidates, but
-        # they cannot substitute for a targeted search after the last library
-        # expansion and equilibrium re-selection.
-        for player in range(config.n_players):
-            audit_candidates[player].extend(
-                _response_candidates_for_player(
-                    config,
-                    routes,
-                    policies,
-                    selection,
-                    player,
-                    training,
-                    options,
-                    options.response_rounds,
-                    response_profile_counter,
-                    response_day_counter,
-                    workers,
-                    progress,
-                )
             )
 
         selected_role_keys = sorted(
@@ -1273,9 +1388,13 @@ def solve_submission_heuristic(
             "route_max_moves": options.route_max_moves,
             "policy_count": len(policies),
             "workers": workers,
-            "initial_policy_count": min(
-                options.initial_policies, options.max_policies
-            ),
+            "initial_policy_count": len(base_policies),
+            "warm_start": options.warm_start,
+            "warm_start_library_count": warm_start_stats["library"],
+            "warm_start_policy_count": len(warm_policies),
+            "warm_start_audit_deviations_added": warm_start_stats[
+                "audit_deviations_added"
+            ],
             "training_episodes": options.episodes,
             "audit_episodes": options.audit_episodes,
             "audit_replicates": options.audit_replicates,
@@ -1289,6 +1408,8 @@ def solve_submission_heuristic(
             "response_day_steps": response_day_counter[0],
             "response_complete": response_complete,
             "response_stable_rounds": stable_rounds,
+            "response_required_stable_rounds": required_stable_rounds,
+            "response_max_attempts": max_response_attempts,
             "policy_cap_reached": policy_cap_reached,
             "response_history": tuple(response_history),
             "training_equilibrium": selection.kind,

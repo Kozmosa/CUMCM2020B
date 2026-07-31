@@ -148,6 +148,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--heuristic-confidence", type=float, default=0.95)
     parser.add_argument("--heuristic-max-policies", type=int, default=32)
     parser.add_argument("--heuristic-initial-policies", type=int, default=16)
+    parser.add_argument(
+        "--heuristic-warm-start",
+        type=str,
+        help="previous heuristic result.json (or its directory) to continue from",
+    )
     parser.add_argument("--heuristic-route-variants", type=int, default=2)
     parser.add_argument("--heuristic-route-max-moves", type=int, default=12)
     parser.add_argument("--heuristic-response-screening-episodes", type=int, default=128)
@@ -255,6 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             confidence=args.heuristic_confidence,
             max_policies=args.heuristic_max_policies,
             initial_policies=args.heuristic_initial_policies,
+            warm_start=args.heuristic_warm_start,
             route_variants_per_family=args.heuristic_route_variants,
             route_max_moves=args.heuristic_route_max_moves,
             response_screening_episodes=args.heuristic_response_screening_episodes,

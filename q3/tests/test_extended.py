@@ -30,7 +30,7 @@ from q3.heuristic import (
     simulate_heuristic_profile,
     solve_q3_2_heuristic,
 )
-from q3.submission_heuristic import enumerate_submission_routes
+from q3.submission_heuristic import _load_warm_start, enumerate_submission_routes
 from q3.model import Action, ActionKind, PlayerState, Status, terminal_state_value
 from q3.open_loop import (
     OpenLoopStrategy,
@@ -185,6 +185,64 @@ class HeuristicBackendTests(unittest.TestCase):
                 + cfg.food_weight * policy.initial_food,
                 cfg.weight_limit,
             )
+
+    def test_submission_warm_start_restores_library_and_audit_response(self) -> None:
+        cfg = level6()
+        routes = enumerate_submission_routes(cfg, 12)
+        seed_policy = generate_heuristic_policies(
+            cfg, HeuristicOptions(episodes=2, max_policies=1)
+        )[0]
+        with TemporaryDirectory() as directory:
+            result = Path(directory) / "result.json"
+            result.write_text(
+                json.dumps(
+                    {
+                        "policy": {
+                            "library": [
+                                {
+                                    "name": seed_policy.name,
+                                    "family": seed_policy.family,
+                                    "route": seed_policy.route,
+                                    "initial_purchase": {
+                                        "water": seed_policy.initial_water,
+                                        "food": seed_policy.initial_food,
+                                    },
+                                    "mine_days": seed_policy.mine_days,
+                                    "village_target": {
+                                        "water": seed_policy.village_water_target,
+                                        "food": seed_policy.village_food_target,
+                                    },
+                                    "safety_factor": seed_policy.safety_factor,
+                                    "yield_when_crowded": False,
+                                    "mine_only_alone": False,
+                                }
+                            ]
+                        },
+                        "stats": {
+                            "audit_best_deviations": [
+                                {
+                                    "policy": "response-r0056-m0-s2.5-y1-a0",
+                                    "mean_gain": 100.0,
+                                }
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            policies, stats = _load_warm_start(cfg, routes, str(result))
+        self.assertEqual(len(policies), 2)
+        self.assertEqual(stats["library"], 1)
+        self.assertEqual(stats["audit_deviations_added"], 1)
+        restored = policies[1]
+        self.assertEqual(restored.name, "response-r0056-m0-s2.5-y1-a0")
+        self.assertEqual(restored.route, routes[56])
+        self.assertTrue(restored.yield_when_crowded)
+
+    def test_heuristic_policy_cap_allows_final_run_size(self) -> None:
+        self.assertEqual(HeuristicOptions(episodes=2, max_policies=48).max_policies, 48)
+        with self.assertRaises(ValueError):
+            HeuristicOptions(episodes=2, max_policies=65)
 
     def test_heuristic_replay_uses_exact_transition_and_terminal_refund(self) -> None:
         cfg = one_step_config(n_players=1)
