@@ -1,0 +1,2464 @@
+{
+  "status": "EMPIRICAL_EQ_NOT_READY",
+  "value_lower": [
+    7973.202206475527,
+    7451.785769007688,
+    7973.202206475527
+  ],
+  "value_upper": [
+    8091.571556674243,
+    8027.691213206379,
+    8091.571556674243
+  ],
+  "success": [
+    0.9999633333333334,
+    0.9988266666666666,
+    0.9999633333333334
+  ],
+  "max_regret_lower": 0.0,
+  "max_regret_upper": 347.5041802524451,
+  "selection_complete": false,
+  "policy": {
+    "scope": "broad_parameterized_policy_response_search",
+    "equilibrium": "pure",
+    "selection_complete_within_policy_class": false,
+    "players": [
+      {
+        "player": 1,
+        "support": [
+          {
+            "policy": "mine18-r1-m2-s2.5",
+            "probability": 1.0
+          }
+        ]
+      },
+      {
+        "player": 2,
+        "support": [
+          {
+            "policy": "response-r0053-m2-s2-y1-a1",
+            "probability": 1.0
+          }
+        ]
+      },
+      {
+        "player": 3,
+        "support": [
+          {
+            "policy": "response-r0067-m2-s2-y0-a0",
+            "probability": 1.0
+          }
+        ]
+      }
+    ],
+    "library": [
+      {
+        "name": "direct-r1-m0-s1",
+        "family": "direct",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 100,
+          "food": 109
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-r1-m0-s1",
+        "family": "village14",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 38,
+          "food": 41
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "mine18-r1-m2-s1",
+        "family": "mine18",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 137,
+          "food": 149
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-mine18-r1-m2-s1",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 99,
+          "food": 108
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "direct-r2-m0-s1",
+        "family": "direct",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 100,
+          "food": 109
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-r2-m0-s1",
+        "family": "village14",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 38,
+          "food": 41
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "mine18-r2-m2-s1",
+        "family": "mine18",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 137,
+          "food": 149
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-mine18-r2-m2-s1",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 99,
+          "food": 108
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "direct-r1-m0-s2.5",
+        "family": "direct",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-r1-m0-s2.5",
+        "family": "village14",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "mine18-r1-m2-s2.5",
+        "family": "mine18",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-mine18-r1-m2-s2.5",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 157,
+          "food": 171
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "direct-r2-m0-s2.5",
+        "family": "direct",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          10,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-r2-m0-s2.5",
+        "family": "village14",
+        "route": [
+          1,
+          6,
+          7,
+          8,
+          9,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "mine18-r1-m4-s1",
+        "family": "mine18",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 173,
+          "food": 188
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "village14-mine18-r1-m4-s1",
+        "family": "village14-mine18",
+        "route": [
+          1,
+          2,
+          3,
+          4,
+          9,
+          14,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 63,
+          "food": 68
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 136,
+          "food": 147
+        },
+        "safety_factor": 1.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0067-m3-s2.5-y1-a1",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": true,
+        "mine_only_alone": true
+      },
+      {
+        "name": "response-r0067-m4-s1.5-y0-a0",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0067-m3-s2.5-y0-a0",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0053-m2-s2-y1-a1",
+        "family": "route0053",
+        "route": [
+          1,
+          6,
+          7,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": true,
+        "mine_only_alone": true
+      },
+      {
+        "name": "response-r0028-m4-s1.5-y0-a0",
+        "family": "route0028",
+        "route": [
+          1,
+          2,
+          7,
+          12,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0067-m3-s2.5-y1-a0",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": true,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0028-m3-s2.5-y0-a0",
+        "family": "route0028",
+        "route": [
+          1,
+          2,
+          7,
+          12,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0022-m3-s2.5-y0-a0",
+        "family": "route0022",
+        "route": [
+          1,
+          2,
+          7,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0067-m2-s2-y0-a0",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0055-m0-s2.5-y1-a0",
+        "family": "route0055",
+        "route": [
+          1,
+          6,
+          11,
+          12,
+          13,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": true,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0179-m2-s1.5-y0-a0",
+        "family": "route0179",
+        "route": [
+          1,
+          2,
+          7,
+          12,
+          17,
+          22,
+          23,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0012-m3-s2.5-y0-a0",
+        "family": "route0012",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0028-m3-s2-y0-a0",
+        "family": "route0028",
+        "route": [
+          1,
+          2,
+          7,
+          12,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0056-m0-s2.5-y1-a0",
+        "family": "route0056",
+        "route": [
+          1,
+          6,
+          11,
+          12,
+          13,
+          14,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": true,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0045-m0-s2.5-y1-a0",
+        "family": "route0045",
+        "route": [
+          1,
+          6,
+          7,
+          12,
+          13,
+          14,
+          15,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 156,
+          "food": 170
+        },
+        "mine_days": 0,
+        "village_target": {
+          "water": 94,
+          "food": 102
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": true,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0801-m2-s2-y0-a0",
+        "family": "route0801",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          21,
+          22,
+          23,
+          18,
+          13,
+          14,
+          19,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 2,
+        "village_target": {
+          "water": 75,
+          "food": 82
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0063-m3-s2.5-y0-a0",
+        "family": "route0063",
+        "route": [
+          1,
+          6,
+          11,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0022-m3-s2-y0-a0",
+        "family": "route0022",
+        "route": [
+          1,
+          2,
+          7,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0053-m3-s2.5-y0-a0",
+        "family": "route0053",
+        "route": [
+          1,
+          6,
+          7,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0012-m3-s2-y0-a0",
+        "family": "route0012",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0067-m3-s2-y0-a0",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0028-m3-s1.5-y0-a0",
+        "family": "route0028",
+        "route": [
+          1,
+          2,
+          7,
+          12,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0063-m3-s2-y0-a0",
+        "family": "route0063",
+        "route": [
+          1,
+          6,
+          11,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0022-m3-s1.5-y0-a0",
+        "family": "route0022",
+        "route": [
+          1,
+          2,
+          7,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0053-m3-s2-y0-a0",
+        "family": "route0053",
+        "route": [
+          1,
+          6,
+          7,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 231,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.0,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0012-m3-s1.5-y0-a0",
+        "family": "route0012",
+        "route": [
+          1,
+          2,
+          3,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0063-m4-s1.5-y0-a0",
+        "family": "route0063",
+        "route": [
+          1,
+          6,
+          11,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0022-m4-s1.5-y0-a0",
+        "family": "route0022",
+        "route": [
+          1,
+          2,
+          7,
+          8,
+          13,
+          18,
+          19,
+          20,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 4,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0067-m3-s1.5-y0-a0",
+        "family": "route0067",
+        "route": [
+          1,
+          6,
+          11,
+          16,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0029-m3-s2.5-y0-a0",
+        "family": "route0029",
+        "route": [
+          1,
+          2,
+          7,
+          12,
+          13,
+          18,
+          19,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0063-m3-s1.5-y0-a0",
+        "family": "route0063",
+        "route": [
+          1,
+          6,
+          11,
+          12,
+          17,
+          18,
+          23,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 252
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 1.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      },
+      {
+        "name": "response-r0023-m3-s2.5-y0-a0",
+        "family": "route0023",
+        "route": [
+          1,
+          2,
+          7,
+          8,
+          13,
+          18,
+          19,
+          24,
+          25
+        ],
+        "initial_purchase": {
+          "water": 232,
+          "food": 251
+        },
+        "mine_days": 3,
+        "village_target": {
+          "water": 0,
+          "food": 0
+        },
+        "safety_factor": 2.5,
+        "yield_when_crowded": false,
+        "mine_only_alone": false
+      }
+    ],
+    "audit_response_candidates": [
+      [
+        "response-r0028-m4-s1.5-y0-a0",
+        "response-r0022-m4-s1.5-y0-a0",
+        "response-r0012-m4-s1.5-y0-a0",
+        "response-r0029-m4-s1.5-y0-a0",
+        "response-r0023-m4-s1.5-y0-a0",
+        "response-r0013-m4-s1.5-y0-a0",
+        "response-r0028-m4-s2-y0-a0",
+        "response-r0022-m4-s2-y0-a0",
+        "response-r0012-m4-s2-y0-a0",
+        "response-r0030-m4-s1.5-y0-a0",
+        "response-r0024-m4-s1.5-y0-a0",
+        "response-r0014-m4-s1.5-y0-a0",
+        "response-r0029-m4-s2-y0-a0",
+        "response-r0023-m4-s2-y0-a0",
+        "response-r0013-m4-s2-y0-a0",
+        "response-r0030-m4-s2-y0-a0"
+      ],
+      [
+        "response-r0055-m0-s2.5-y1-a0",
+        "response-r0045-m0-s2.5-y1-a0",
+        "response-r0039-m0-s2.5-y1-a0",
+        "response-r0036-m0-s2.5-y1-a0",
+        "response-r0025-m0-s2.5-y1-a0",
+        "response-r0019-m0-s2.5-y1-a0",
+        "response-r0016-m0-s2.5-y1-a0",
+        "response-r0009-m0-s2.5-y1-a0",
+        "response-r0006-m0-s2.5-y1-a0",
+        "response-r0002-m0-s2.5-y1-a0",
+        "response-r0057-m0-s2.5-y1-a0",
+        "response-r0056-m0-s2.5-y1-a0",
+        "response-r0047-m0-s2.5-y1-a0",
+        "response-r0046-m0-s2.5-y1-a0",
+        "response-r0041-m0-s2.5-y1-a0",
+        "response-r0040-m0-s2.5-y1-a0"
+      ],
+      [
+        "response-r0067-m4-s1.5-y0-a0",
+        "response-r0063-m4-s1.5-y0-a0",
+        "response-r0053-m4-s1.5-y0-a0",
+        "response-r0066-m4-s1.5-y0-a0",
+        "response-r0062-m4-s1.5-y0-a0",
+        "response-r0052-m4-s1.5-y0-a0",
+        "response-r0067-m4-s2-y0-a0",
+        "response-r0063-m4-s2-y0-a0",
+        "response-r0053-m4-s2-y0-a0",
+        "response-r0065-m4-s1.5-y0-a0",
+        "response-r0061-m4-s1.5-y0-a0",
+        "response-r0051-m4-s1.5-y0-a0",
+        "response-r0066-m4-s2-y0-a0",
+        "response-r0062-m4-s2-y0-a0",
+        "response-r0052-m4-s2-y0-a0",
+        "response-r0065-m4-s2-y0-a0"
+      ]
+    ],
+    "representative_profile": [
+      "mine18-r1-m2-s2.5",
+      "response-r0053-m2-s2-y1-a1",
+      "response-r0067-m2-s2-y0-a0"
+    ],
+    "representative_weather": [
+      "sunny",
+      "hot",
+      "sunny",
+      "hot",
+      "sandstorm",
+      "sunny",
+      "hot",
+      "hot",
+      "sandstorm",
+      "sunny",
+      "sandstorm",
+      "sunny",
+      "hot",
+      "sunny",
+      "sunny",
+      "sunny",
+      "hot",
+      "hot",
+      "sunny",
+      "hot",
+      "sunny",
+      "sunny",
+      "sunny",
+      "hot",
+      "sunny",
+      "sunny",
+      "sandstorm",
+      "sunny",
+      "hot",
+      "hot"
+    ],
+    "representative_value": [
+      7852.5,
+      8822.5,
+      7852.5
+    ],
+    "representative_success": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "representative_replay": [
+      {
+        "day": 1,
+        "weather": "sunny",
+        "actions": [
+          "move:2",
+          "stay",
+          "move:6"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 2,
+            "water": 225,
+            "food": 244,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 1,
+            "water": 228,
+            "food": 248,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 6,
+            "water": 225,
+            "food": 244,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 2,
+        "weather": "hot",
+        "actions": [
+          "move:3",
+          "move:6",
+          "move:11"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 3,
+            "water": 207,
+            "food": 226,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 6,
+            "water": 210,
+            "food": 230,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 11,
+            "water": 207,
+            "food": 226,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 3,
+        "weather": "sunny",
+        "actions": [
+          "move:8",
+          "move:7",
+          "move:16"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 8,
+            "water": 201,
+            "food": 218,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 7,
+            "water": 204,
+            "food": 222,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 16,
+            "water": 201,
+            "food": 218,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 4,
+        "weather": "hot",
+        "actions": [
+          "move:13",
+          "move:12",
+          "move:17"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 13,
+            "water": 183,
+            "food": 200,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 12,
+            "water": 186,
+            "food": 204,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 17,
+            "water": 183,
+            "food": 200,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 5,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "stay"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 13,
+            "water": 173,
+            "food": 190,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 12,
+            "water": 176,
+            "food": 194,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 17,
+            "water": 173,
+            "food": 190,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 6,
+        "weather": "sunny",
+        "actions": [
+          "move:18",
+          "move:17",
+          "move:18"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 167,
+            "food": 182,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 17,
+            "water": 170,
+            "food": 186,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 167,
+            "food": 182,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 7,
+        "weather": "hot",
+        "actions": [
+          "mine",
+          "move:18",
+          "mine"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 140,
+            "food": 155,
+            "cash": 6825.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 152,
+            "food": 168,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 140,
+            "food": 155,
+            "cash": 6825.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 8,
+        "weather": "hot",
+        "actions": [
+          "mine",
+          "stay",
+          "mine"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 113,
+            "food": 128,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 143,
+            "food": 159,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 113,
+            "food": 128,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 9,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "stay",
+          "stay"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 103,
+            "food": 118,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 133,
+            "food": 149,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 103,
+            "food": 118,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 10,
+        "weather": "sunny",
+        "actions": [
+          "move:19",
+          "stay",
+          "move:23"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 19,
+            "water": 97,
+            "food": 110,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 130,
+            "food": 145,
+            "cash": 6325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 23,
+            "water": 97,
+            "food": 110,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 11,
+        "weather": "sandstorm",
+        "actions": [
+          "stay",
+          "mine",
+          "stay"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 19,
+            "water": 87,
+            "food": 100,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 100,
+            "food": 115,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 23,
+            "water": 87,
+            "food": 100,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 12,
+        "weather": "sunny",
+        "actions": [
+          "move:20",
+          "mine",
+          "move:24"
+        ],
+        "state": [
+          {
+            "status": "ACTIVE",
+            "position": 20,
+            "water": 81,
+            "food": 92,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 18,
+            "water": 91,
+            "food": 103,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "ACTIVE",
+            "position": 24,
+            "water": 81,
+            "food": 92,
+            "cash": 7325.0,
+            "fixed_payoff": 0.0
+          }
+        ]
+      },
+      {
+        "day": 13,
+        "weather": "hot",
+        "actions": [
+          "move:25",
+          "move:23",
+          "move:25"
+        ],
+        "state": [
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7852.5
+          },
+          {
+            "status": "ACTIVE",
+            "position": 23,
+            "water": 73,
+            "food": 85,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7852.5
+          }
+        ]
+      },
+      {
+        "day": 14,
+        "weather": "sunny",
+        "actions": [
+          "inactive",
+          "move:24",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7852.5
+          },
+          {
+            "status": "ACTIVE",
+            "position": 24,
+            "water": 67,
+            "food": 77,
+            "cash": 8325.0,
+            "fixed_payoff": 0.0
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7852.5
+          }
+        ]
+      },
+      {
+        "day": 15,
+        "weather": "sunny",
+        "actions": [
+          "inactive",
+          "move:25",
+          "inactive"
+        ],
+        "state": [
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7852.5
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 8822.5
+          },
+          {
+            "status": "FINISHED",
+            "position": 0,
+            "water": 0,
+            "food": 0,
+            "cash": 0.0,
+            "fixed_payoff": 7852.5
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "route_universe": 804,
+    "route_max_moves": 12,
+    "policy_count": 48,
+    "workers": 16,
+    "initial_policy_count": 16,
+    "warm_start": "q3/output/q3_2_submission/result.json",
+    "warm_start_library_count": 29,
+    "warm_start_policy_count": 30,
+    "warm_start_audit_deviations_added": 1,
+    "training_episodes": 5000,
+    "audit_episodes": 100000,
+    "audit_replicates": 3,
+    "stability_episodes": 500,
+    "stability_replicates": 2,
+    "confidence": 0.95,
+    "training_canonical_profiles": 19600,
+    "training_joint_profiles": 110592,
+    "training_day_steps": 1335451390,
+    "response_profiles_screened": 138696,
+    "response_day_steps": 315188109,
+    "response_complete": false,
+    "response_stable_rounds": 0,
+    "response_required_stable_rounds": 3,
+    "response_max_attempts": 27,
+    "policy_cap_reached": true,
+    "response_history": [
+      {
+        "round": 1,
+        "policy_count": 30,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          0.0,
+          6565.09765625,
+          475.3125
+        ],
+        "added": [
+          "response-r0045-m0-s2.5-y1-a0",
+          "response-r0801-m2-s2-y0-a0"
+        ]
+      },
+      {
+        "round": 2,
+        "policy_count": 32,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          858.10546875,
+          -828.3984375,
+          858.10546875
+        ],
+        "added": [
+          "response-r0063-m3-s2.5-y0-a0",
+          "response-r0022-m3-s2-y0-a0"
+        ]
+      },
+      {
+        "round": 3,
+        "policy_count": 34,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          856.54296875,
+          -830.9375,
+          856.54296875
+        ],
+        "added": [
+          "response-r0053-m3-s2.5-y0-a0",
+          "response-r0012-m3-s2-y0-a0"
+        ]
+      },
+      {
+        "round": 4,
+        "policy_count": 36,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          858.3203125,
+          -98.7109375,
+          858.3203125
+        ],
+        "added": [
+          "response-r0067-m3-s2-y0-a0",
+          "response-r0028-m3-s1.5-y0-a0"
+        ]
+      },
+      {
+        "round": 5,
+        "policy_count": 38,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          859.21875,
+          -1251.9921875,
+          859.21875
+        ],
+        "added": [
+          "response-r0063-m3-s2-y0-a0",
+          "response-r0022-m3-s1.5-y0-a0"
+        ]
+      },
+      {
+        "round": 6,
+        "policy_count": 40,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          863.0078125,
+          -91.73828125,
+          863.0078125
+        ],
+        "added": [
+          "response-r0053-m3-s2-y0-a0",
+          "response-r0012-m3-s1.5-y0-a0"
+        ]
+      },
+      {
+        "round": 7,
+        "policy_count": 42,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          1712.36328125,
+          -105.37109375,
+          1712.36328125
+        ],
+        "added": [
+          "response-r0063-m4-s1.5-y0-a0",
+          "response-r0022-m4-s1.5-y0-a0"
+        ]
+      },
+      {
+        "round": 8,
+        "policy_count": 44,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          859.84375,
+          -818.3984375,
+          859.84375
+        ],
+        "added": [
+          "response-r0067-m3-s1.5-y0-a0",
+          "response-r0029-m3-s2.5-y0-a0"
+        ]
+      },
+      {
+        "round": 9,
+        "policy_count": 46,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          858.5546875,
+          -101.69921875,
+          858.5546875
+        ],
+        "added": [
+          "response-r0063-m3-s1.5-y0-a0",
+          "response-r0023-m3-s2.5-y0-a0"
+        ]
+      },
+      {
+        "round": 10,
+        "policy_count": 48,
+        "equilibrium": "pure",
+        "pure_equilibria": 6,
+        "training_regret": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "best_response_gain": [
+          0.0,
+          6514.609375,
+          0.0
+        ],
+        "added": []
+      }
+    ],
+    "training_equilibrium": "pure",
+    "training_pure_equilibria": 6,
+    "training_value_mean": [
+      8084.0685,
+      7733.861,
+      8084.0685
+    ],
+    "training_success_mean": [
+      1.0,
+      0.9988,
+      1.0
+    ],
+    "training_policy_regret_mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "stability_complete": false,
+    "stability_profiles": 39200,
+    "stability_day_steps": 266585171,
+    "stability_results": [
+      {
+        "seed": 20270801,
+        "equilibrium": "pure",
+        "pure_equilibria": 1224,
+        "representative_profile": [
+          "response-r0055-m0-s2.5-y1-a0",
+          "response-r0801-m2-s2-y0-a0",
+          "response-r0029-m3-s2.5-y0-a0"
+        ],
+        "role_structure_matches": false,
+        "value": [
+          7670.205,
+          8141.225,
+          9527.475
+        ],
+        "success": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "regret": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "seed": 20270802,
+        "equilibrium": "pure",
+        "pure_equilibria": 432,
+        "representative_profile": [
+          "response-r0067-m3-s2.5-y0-a0",
+          "response-r0067-m3-s2.5-y1-a0",
+          "response-r0028-m3-s2.5-y0-a0"
+        ],
+        "role_structure_matches": false,
+        "value": [
+          8122.356666666616,
+          8622.42666666662,
+          8122.356666666616
+        ],
+        "success": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "regret": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "audit_profiles": 549,
+    "audit_day_steps": 825252020,
+    "audit_value_mean": [
+      8044.885149999999,
+      7758.075658333334,
+      8044.885149999999
+    ],
+    "audit_success_lower": [
+      0.9998839756829077,
+      0.9985414985180577,
+      0.9998839756829077
+    ],
+    "audit_policy_regret_mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "audit_best_deviations": [
+      {
+        "player": 1,
+        "policy": "response-r0028-m3-s2.5-y0-a0",
+        "mean_gain": -162.46465,
+        "lower": -511.7431547913904,
+        "upper": 186.81385479139038,
+        "success": 0.99894
+      },
+      {
+        "player": 2,
+        "policy": "response-r0056-m0-s2.5-y1-a0",
+        "mean_gain": -41.936575,
+        "lower": -431.3773302524451,
+        "upper": 347.5041802524451,
+        "success": 0.99997
+      },
+      {
+        "player": 3,
+        "policy": "response-r0067-m3-s2.5-y0-a0",
+        "mean_gain": -162.46465,
+        "lower": -511.7431547913904,
+        "upper": 186.81385479139038,
+        "success": 0.99894
+      }
+    ],
+    "audit_replicate_results": [
+      {
+        "value_mean": [
+          8021.256825,
+          7821.181975,
+          8021.256825
+        ],
+        "success": [
+          0.99994,
+          0.99889,
+          0.99994
+        ],
+        "success_lower": [
+          0.9998839756829077,
+          0.9987027800171002,
+          0.9998839756829077
+        ],
+        "regret_mean": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "regret_upper": [
+          137.31814661626396,
+          173.54680793413291,
+          137.31814661626396
+        ]
+      },
+      {
+        "value_mean": [
+          8041.46705,
+          7781.255375,
+          8041.46705
+        ],
+        "success": [
+          0.99996,
+          0.99885,
+          0.99996
+        ],
+        "success_lower": [
+          0.999910905419579,
+          0.9986597008302164,
+          0.999910905419579
+        ],
+        "regret_mean": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "regret_upper": [
+          186.81385479139038,
+          218.35423146192136,
+          186.81385479139038
+        ]
+      },
+      {
+        "value_mean": [
+          8071.931575,
+          7671.789625,
+          8071.931575
+        ],
+        "success": [
+          0.99999,
+          0.99874,
+          0.99999
+        ],
+        "success_lower": [
+          0.9999551767638987,
+          0.9985414985180577,
+          0.9999551767638987
+        ],
+        "regret_mean": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "regret_upper": [
+          2.372839890417481,
+          347.5041802524451,
+          2.372839890417481
+        ]
+      }
+    ],
+    "submission_mean_regret_target": 100.0,
+    "submission_upper_regret_target": 200.0,
+    "submission_success_lower_target": 0.9999,
+    "submission_quality_met": false,
+    "regret_scope": "broad_parameterized_policy_response_search",
+    "value_bounds": "independent_holdout_normal_confidence_interval",
+    "success_bounds": "independent_holdout_one_sided_wilson_lower",
+    "exact_joint_transition_rules": true,
+    "full_action_regret_certified": false,
+    "elapsed_seconds": 5151.319676250219,
+    "peak_rss_bytes": 3548114944
+  },
+  "checkpoint": null,
+  "backend": "heuristic",
+  "player_regret_lower": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "player_regret_upper": [
+    186.81385479139038,
+    347.5041802524451,
+    186.81385479139038
+  ],
+  "elapsed_seconds": 5151.490012452006,
+  "config": {
+    "name": "level6",
+    "failure_penalty": 1000000,
+    "p_weather": {
+      "sunny": 0.5,
+      "hot": 0.4,
+      "sandstorm": 0.1
+    }
+  },
+  "git_commit": "db064dbfdbed627b627ba5ea79c78c5dcdf088b9",
+  "seed": 20260801,
+  "workers": 16,
+  "gil_enabled": true,
+  "numba_available": true,
+  "purchase_numba_available": true,
+  "purchase_cuda_available": true,
+  "resume_command": null
+}
